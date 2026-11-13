@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the schema and run the tests
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libglib2.0-dev-bin
+          glib-compile-schemas --strict --dry-run schemas
+          ./tests/run.sh
+
+      - name: Build the extension zip
+        run: |
+          zip -r informer@umesh.shell-extension.zip metadata.json *.js schemas icons -x "tests/*"
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: informer@umesh.shell-extension.zip
+          generate_release_notes: true
