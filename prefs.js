@@ -111,21 +111,40 @@ export default class InformerPrefs extends ExtensionPreferences {
         const basics = new Adw.PreferencesGroup({title: 'General'});
         general.add(basics);
 
-        const nameRow = new Adw.EntryRow({title: 'Your name (shown in the greeting)'});
+        const idleRow = new Adw.ComboRow({
+            title: 'Default line',
+            subtitle: 'What the bar shows when there is no message',
+            model: new Gtk.StringList({strings: ['Network speed', 'Greeting']}),
+        });
+        idleRow.selected = settings.get_string('idle-display') === 'greeting' ? 1 : 0;
+        idleRow.connect('notify::selected', () => {
+            settings.set_string('idle-display', idleRow.selected === 1 ? 'greeting' : 'speed');
+        });
+        basics.add(idleRow);
+
+        basics.add(switchRow(settings, 'show-icons', 'Show icons',
+            'Arrows for network speed, a sun for the weather, and icons on messages'));
+
+        basics.add(switchRow(settings, 'idle-show-temp', 'Show temperature next to the speed',
+            'Needs the weather (Weather page)'));
+
+        const nameRow = new Adw.EntryRow({title: 'Your name (used when the default line is the greeting)'});
         settings.bind('name', nameRow, 'text', Gio.SettingsBindFlags.DEFAULT);
         basics.add(nameRow);
 
         basics.add(spinRow(settings, 'flash-seconds', 'Message time',
             'Seconds a status message stays in the bar', 2, 30));
 
+        const DIRS = ['right-to-left', 'left-to-right', 'top-to-bottom', 'bottom-to-top', 'flip', 'random'];
         const dirRow = new Adw.ComboRow({
-            title: 'Slide direction',
-            model: new Gtk.StringList({strings: ['Right to left', 'Left to right']}),
+            title: 'Animation',
+            subtitle: 'How new text arrives in the bar',
+            model: new Gtk.StringList({strings: ['Slide right to left', 'Slide left to right',
+                'Roll top to bottom', 'Roll bottom to top', 'Flip', 'Random']}),
         });
-        dirRow.selected = settings.get_string('direction') === 'left-to-right' ? 1 : 0;
+        dirRow.selected = Math.max(0, DIRS.indexOf(settings.get_string('direction')));
         dirRow.connect('notify::selected', () => {
-            settings.set_string('direction',
-                dirRow.selected === 1 ? 'left-to-right' : 'right-to-left');
+            settings.set_string('direction', DIRS[dirRow.selected]);
         });
         basics.add(dirRow);
 
@@ -139,6 +158,39 @@ export default class InformerPrefs extends ExtensionPreferences {
         quiet.add(spinRow(settings, 'quiet-end', 'Until', 'Hour of the day (0 to 23)', 0, 23));
         quiet.add(switchRow(settings, 'quiet-fullscreen', 'Stay quiet while fullscreen',
             'Videos, games, presentations'));
+
+        // ================================================= Weather
+        const weatherPage = new Adw.PreferencesPage({
+            title: 'Weather',
+            icon_name: 'weather-few-clouds-symbolic',
+        });
+        window.add(weatherPage);
+
+        const wx = new Adw.PreferencesGroup({
+            title: 'Weather',
+            description: 'Data from Open-Meteo (free, no account). Leave the city empty to use ' +
+                'the place your IP address points to (looked up through ipwho.is).',
+        });
+        weatherPage.add(wx);
+        wx.add(switchRow(settings, 'weather-enabled', 'Show the weather',
+            'Temperature in the bar and a weather message now and then'));
+
+        const cityRow = new Adw.EntryRow({title: 'City (empty = automatic)'});
+        settings.bind('weather-city', cityRow, 'text', Gio.SettingsBindFlags.DEFAULT);
+        wx.add(cityRow);
+
+        const unitRow = new Adw.ComboRow({
+            title: 'Temperature unit',
+            model: new Gtk.StringList({strings: ['Celsius (\u00b0C)', 'Fahrenheit (\u00b0F)']}),
+        });
+        unitRow.selected = settings.get_string('weather-unit') === 'f' ? 1 : 0;
+        unitRow.connect('notify::selected', () => {
+            settings.set_string('weather-unit', unitRow.selected === 1 ? 'f' : 'c');
+        });
+        wx.add(unitRow);
+
+        wx.add(spinRow(settings, 'weather-minutes', 'Update every (minutes)',
+            'How often the weather is refreshed and shown as a message', 5, 120));
 
         // ================================================= Messages + priority
         const messages = new Adw.PreferencesPage({
@@ -293,8 +345,8 @@ export default class InformerPrefs extends ExtensionPreferences {
             description: 'Pick the text color for each kind of message.',
         });
         colorsPage.add(colors);
-        colors.add(colorRow(settings, 'color-greeting', 'Greeting',
-            'Good Morning, Umesh'));
+        colors.add(colorRow(settings, 'color-greeting', 'Default line',
+            'Network speed (or the greeting)'));
         colors.add(colorRow(settings, 'color-good', 'Good news',
             'Connected, ON, charging, battery full, volume up'));
         colors.add(colorRow(settings, 'color-bad', 'Bad news',

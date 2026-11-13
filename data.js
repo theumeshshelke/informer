@@ -24,6 +24,7 @@ export const CATEGORIES = [
     {key: 'keys', title: 'Caps Lock / Num Lock', sub: 'On / off', prio: NORMAL, toggle: true},
     {key: 'media', title: 'Now playing', sub: 'Song title from your media player', prio: NORMAL, toggle: true},
     {key: 'updates', title: 'Updates available', sub: 'Software updates waiting', prio: LOW, toggle: true},
+    {key: 'weather', title: 'Weather', sub: 'Temperature, conditions, humidity, wind. Turn on or off in the Weather page', prio: LOW, toggle: false},
     {key: 'hourly', title: 'New line every hour', sub: 'The hourly one-liner', prio: LOW, toggle: true},
     {key: 'thought', title: 'Good thoughts', sub: 'Turn them on or off in the Thoughts page', prio: LOW, toggle: false},
 ];

@@ -12,7 +12,36 @@
     </key>
     <key name="direction" type="s">
       <default>'right-to-left'</default>
-      <summary>Slide direction: right-to-left or left-to-right</summary>
+      <summary>Animation: right-to-left, left-to-right, top-to-bottom, bottom-to-top, flip or random</summary>
+    </key>
+    <key name="show-icons" type="b">
+      <default>true</default>
+      <summary>Show icons (network arrows, sun, Wi-Fi, battery ...) next to the text</summary>
+    </key>
+    <key name="idle-display" type="s">
+      <default>'speed'</default>
+      <summary>What the bar shows when there is no message: speed (network speed) or greeting</summary>
+    </key>
+    <key name="idle-show-temp" type="b">
+      <default>true</default>
+      <summary>Show the temperature next to the network speed</summary>
+    </key>
+    <key name="weather-enabled" type="b">
+      <default>true</default>
+      <summary>Fetch the weather (Open-Meteo)</summary>
+    </key>
+    <key name="weather-city" type="s">
+      <default>''</default>
+      <summary>City for the weather. Empty = work it out from your IP address</summary>
+    </key>
+    <key name="weather-unit" type="s">
+      <default>'c'</default>
+      <summary>Temperature unit: c (Celsius) or f (Fahrenheit)</summary>
+    </key>
+    <key name="weather-minutes" type="i">
+      <default>15</default>
+      <range min="5" max="120"/>
+      <summary>Minutes between weather updates (and weather messages)</summary>
     </key>
     <key name="thoughts-enabled" type="b">
       <default>true</default>
@@ -175,6 +204,11 @@
       <range min="0" max="3"/>
       <summary>Priority of updates available messages: 0 low, 1 normal, 2 high, 3 critical</summary>
     </key>
+    <key name="priority-weather" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of weather messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
     <key name="priority-hourly" type="i">
       <default>0</default>
       <range min="0" max="3"/>
@@ -235,7 +269,7 @@
     </key>
     <key name="color-greeting" type="s">
       <default>'#ffffff'</default>
-      <summary>Colour of the greeting</summary>
+      <summary>Colour of the idle line (network speed or greeting)</summary>
     </key>
     <key name="color-good" type="s">
       <default>'#2ecc71'</default>

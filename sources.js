@@ -4,6 +4,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Soup from 'gi://Soup?version=3.0';
 
 import {run, readFile, listDir, clip, fmtBytes, fmtDuration} from './util.js';
 
@@ -709,5 +710,166 @@ export class CalendarSource extends Source {
                     kind: 'warn', cat: 'calendar', key: `cal:${id}`, boost: 1});
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------- Weather
+// Open-Meteo (free, no API key). The place comes from the city typed in the
+// settings, or - when that is empty - from your IP address (ipwho.is).
+const WMO = {
+    0: 'Clear sky', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast',
+    45: 'Fog', 48: 'Freezing fog',
+    51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle',
+    56: 'Freezing drizzle', 57: 'Freezing drizzle',
+    61: 'Light rain', 63: 'Rain', 65: 'Heavy rain',
+    66: 'Freezing rain', 67: 'Freezing rain',
+    71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains',
+    80: 'Light showers', 81: 'Showers', 82: 'Violent showers',
+    85: 'Snow showers', 86: 'Heavy snow showers',
+    95: 'Thunderstorm', 96: 'Thunderstorm, hail', 99: 'Thunderstorm, hail',
+};
+const WEATHER_RETRY_MS = 2 * 60 * 1000;
+const PLACE_CACHE_MS = 60 * 60 * 1000;     // IP-based location is looked up at most hourly
+
+export class WeatherSource extends Source {
+    constructor(ctx) {
+        super(ctx);
+        this.current = null;          // latest reading, or null
+        this._http = new Soup.Session({timeout: 10, user_agent: 'informer-gnome-shell-extension'});
+        this._abort = new Gio.Cancellable();
+        this._place = null;           // {key, lat, lon, name, at}
+        this._gen = 0;                // a newer settings change cancels the older cycle
+        this._timer = 0;
+        this._ids = [];
+        for (const k of ['weather-enabled', 'weather-city', 'weather-unit']) {
+            this._ids.push(this.settings.connect(`changed::${k}`, () => {
+                if (!this.on('weather-enabled'))
+                    this.current = null;
+                this._restart(1500);          // wait for typing to stop
+            }));
+        }
+        this._restart(8000);                  // give the network a moment after login
+    }
+
+    // short form for the idle line: "26°C" or '' when there is nothing yet (the sun icon is added by the bar)
+    brief() {
+        const c = this.current;
+        if (!c || !this.on('weather-enabled'))
+            return '';
+        return `${c.temp}°${c.unit}`;
+    }
+
+    _restart(delayMs) {
+        const gen = ++this._gen;
+        this.cancel(this._timer);
+        this._abort.cancel();                 // drop a request that is still in flight
+        this._abort = new Gio.Cancellable();
+        this._timer = this.after(delayMs, () => this._cycle(gen));
+    }
+
+    async _cycle(gen) {
+        this._timer = 0;
+        if (this.dead || gen !== this._gen)
+            return;
+        if (!this.on('weather-enabled')) {
+            this.current = null;
+            return;                           // switched off: wait for a settings change
+        }
+        let ok = false;
+        try {
+            await this._refresh(gen);
+            ok = true;
+        } catch (e) {
+            if (!this.dead && gen === this._gen)
+                console.error(`informer: weather: ${e}`);
+        }
+        if (this.dead || gen !== this._gen)
+            return;
+        const mins = Math.max(5, this.num('weather-minutes'));
+        this._timer = this.after(ok ? mins * 60000 : WEATHER_RETRY_MS, () => this._cycle(gen));
+    }
+
+    _getJson(url) {
+        return new Promise((resolve, reject) => {
+            const msg = Soup.Message.new('GET', url);
+            if (!msg) {
+                reject(new Error(`bad url ${url}`));
+                return;
+            }
+            this._http.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, this._abort, (sess, res) => {
+                try {
+                    const bytes = sess.send_and_read_finish(res);
+                    if (msg.get_status() !== Soup.Status.OK)
+                        throw new Error(`HTTP ${msg.get_status()}`);
+                    resolve(JSON.parse(new TextDecoder().decode(bytes.get_data())));
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
+    }
+
+    async _locate() {
+        const city = this.settings.get_string('weather-city').trim();
+        const p = this._place;
+        if (p && p.key === city && (city || Date.now() - p.at < PLACE_CACHE_MS))
+            return p;
+        if (city) {
+            const j = await this._getJson('https://geocoding-api.open-meteo.com/v1/search?' +
+                `name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
+            const r = j.results?.[0];
+            if (!r)
+                throw new Error(`city not found: ${city}`);
+            this._place = {key: city, lat: r.latitude, lon: r.longitude, name: r.name, at: Date.now()};
+        } else {
+            const j = await this._getJson('https://ipwho.is/');
+            if (!j.success)
+                throw new Error('could not work out your location');
+            this._place = {key: '', lat: j.latitude, lon: j.longitude, name: j.city || 'Here', at: Date.now()};
+        }
+        return this._place;
+    }
+
+    async _refresh(gen) {
+        const place = await this._locate();
+        const f = this.settings.get_string('weather-unit') === 'f';
+        const j = await this._getJson('https://api.open-meteo.com/v1/forecast?' +
+            `latitude=${place.lat}&longitude=${place.lon}` +
+            '&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m' +
+            `&temperature_unit=${f ? 'fahrenheit' : 'celsius'}&wind_speed_unit=${f ? 'mph' : 'kmh'}&timezone=auto`);
+        const c = j.current;
+        if (!c || typeof c.temperature_2m !== 'number')
+            throw new Error('no weather data');
+        if (this.dead || gen !== this._gen)
+            return;
+
+        const desc = WMO[c.weather_code] ?? 'Unknown';
+        this.current = {
+            city: place.name,
+            temp: Math.round(c.temperature_2m),
+            feels: Math.round(c.apparent_temperature),
+            humidity: Math.round(c.relative_humidity_2m),
+            wind: Math.round(c.wind_speed_10m),
+            windUnit: f ? 'mph' : 'km/h',
+            unit: f ? 'F' : 'C',
+            desc,
+        };
+        const w = this.current;
+        this.post({
+            text: clip(`${w.city} ${w.temp}°${w.unit}, ${w.desc} · ` +
+                `Humidity ${w.humidity}% · Wind ${w.wind} ${w.windUnit}`, 70),
+            kind: 'info', cat: 'weather', key: 'weather',
+        });
+    }
+
+    destroy() {
+        for (const id of this._ids)
+            this.settings.disconnect(id);
+        this._ids = [];
+        this._abort.cancel();
+        try {
+            this._http.abort();
+        } catch (e) { /* ignore */ }
+        super.destroy();
     }
 }

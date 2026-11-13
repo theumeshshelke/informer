@@ -1,7 +1,9 @@
 // Informer - GNOME Shell extension (GNOME 45+ ESM style)
-// Top bar shows "Good Morning, Umesh". Changes (Bluetooth, Wi-Fi, charging,
-// volume, USB, internet ...) slide in as a coloured message, a good thought
-// slides in every few minutes, then the greeting returns.
+// Top bar shows the live network speed (or the greeting, your choice) plus
+// the temperature. Changes (Bluetooth, Wi-Fi, charging, volume, USB, internet,
+// weather ...) slide in as a coloured message, a good thought slides in every
+// few minutes, then the idle line returns. Messages can slide in from the
+// side, roll up / down, flip, or pick a random one.
 //
 // Left click = settings. Middle click = show the next good thought now.
 //
@@ -20,15 +22,21 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {CATEGORIES, HIGH, HOURLY, LOW, NORMAL, CRITICAL, THOUGHTS} from './data.js';
 import {MessageQueue} from './queue.js';
-import {listDir, readFile, run} from './util.js';
+import {fmtBytes, listDir, readFile, run} from './util.js';
 import {
     CalendarSource, CameraSource, InternetSource, KeyboardSource,
-    MediaSource, SystemSource, UsbSource,
+    MediaSource, SystemSource, UsbSource, WeatherSource,
 } from './sources.js';
 
 // ---------------- look & feel (code-level settings) ----------------
-const SLIDE_PX = 60;        // how far the text slides
+const SLIDE_PX = 60;        // how far the text slides sideways
 const SLIDE_MS = 250;       // slide speed (smaller = faster)
+const ROLL_PX = 22;         // how far the text travels up / down (about the bar height)
+const ROLL_OUT_MS = 150;    // old text leaving (up / down / flip)
+const ROLL_IN_MS = 280;     // new text arriving (up / down / flip)
+const IDLE_MIN_EM = 14;     // minimum width of the speed line, so the bar does not jitter
+const IDLE_MIN_EM_TEMP = 19;   // same, when the temperature is shown too
+const ICON_PX = 18;         // icon size in the bar
 const WHITE = '#ffffff';    // fallback only - colours are set in the Informer settings
 const UNPLUG_REPEAT_MS = 10 * 60 * 1000;   // repeat "unplug the charger" this often
 const LOW_REPEAT_MS = 3 * 60 * 1000;       // repeat very-low-battery warnings this often
@@ -46,6 +54,82 @@ function pick(list, i) {
     while (gcd(stride, list.length) !== 1)
         stride++;
     return list[(i * stride) % list.length];
+}
+
+// ---- animations -----------------------------------------------------------
+const ANIM_MODES = ['right-to-left', 'left-to-right', 'top-to-bottom', 'bottom-to-top', 'flip'];
+const ROLLING = new Set(['top-to-bottom', 'bottom-to-top', 'flip']);   // old text leaves first
+
+// where the new text starts from
+function enterFrom(mode) {
+    switch (mode) {
+    case 'left-to-right': return {translation_x: -SLIDE_PX};
+    case 'top-to-bottom': return {translation_y: -ROLL_PX};   // drops in from above
+    case 'bottom-to-top': return {translation_y: ROLL_PX};    // rises from below
+    case 'flip': return {rotation_angle_x: -90};
+    default: return {translation_x: SLIDE_PX};
+    }
+}
+
+// where the old text goes (rolling modes only)
+function exitTo(mode) {
+    switch (mode) {
+    case 'top-to-bottom': return {translation_y: ROLL_PX};
+    case 'bottom-to-top': return {translation_y: -ROLL_PX};
+    default: return {rotation_angle_x: 90};
+    }
+}
+
+// ---- network speed --------------------------------------------------------
+// Skip loopback and virtual interfaces so traffic is not counted twice
+// (a VPN tunnel carries the same bytes as the real Wi-Fi / Ethernet card).
+const VIRTUAL_IF = /^(lo|docker|veth|br-|virbr|vmnet|vboxnet|tun|tap|wg|tailscale|zt|ifb|dummy)/;
+
+// {iface: {rx, tx}} total bytes since boot
+function readNetBytes() {
+    const out = {};
+    const lines = readFile('/proc/net/dev').split('\n').slice(2);   // 2 header lines
+    for (const line of lines) {
+        const i = line.indexOf(':');
+        if (i < 0)
+            continue;
+        const name = line.slice(0, i).trim();
+        if (VIRTUAL_IF.test(name))
+            continue;
+        const f = line.slice(i + 1).trim().split(/\s+/);
+        out[name] = {rx: Number(f[0]) || 0, tx: Number(f[8]) || 0};
+    }
+    return out;
+}
+
+function fmtSpeed(bytesPerSec) {
+    return `${fmtBytes(bytesPerSec)}/s`;
+}
+
+// ---- icons (files in icons/, one per kind of message) ------------------------
+// m: the queued message {text, kind, cat, key}. Returns an icon name or null.
+function iconFor(m) {
+    const good = m.kind === 'good';
+    const pct = parseInt((m.text.match(/(\d+)%/) ?? [])[1] ?? '100');
+    switch (m.cat) {
+    case 'wifi':
+    case 'internet': return good ? 'wifi-on' : 'wifi-off';
+    case 'bluetooth': return 'bluetooth';
+    case 'volume': return good ? 'volume-up' : 'volume-down';
+    case 'battery':
+        if (/^Charging/.test(m.text))
+            return 'battery-charging';
+        return pct <= 30 && /^Discharging/.test(m.text) ? 'battery-low' : 'battery-full';
+    case 'batterywarn': return m.key === 'unplug' ? 'battery-full' : 'battery-low';
+    case 'modes': return m.key === 'airplane' ? 'airplane' : m.key === 'hotspot' ? 'wifi-on' : null;
+    case 'media': return 'music';
+    case 'updates': return 'update';
+    case 'thought': return 'thought';
+    case 'weather': return 'sun';
+    case 'syswarn':
+    case 'calendar': return 'alert';
+    default: return m.kind === 'warn' ? 'alert' : null;
+    }
 }
 
 function greetingWord(h) {
@@ -87,11 +171,19 @@ class InformerIndicator extends PanelMenu.Button {
         this._ext = ext;
         this._s = settings;
 
-        this._greet = new St.Label({
+        // _row is what gets animated; _content (icons + labels) is centred inside it
+        this._row = new St.BoxLayout({y_align: Clutter.ActorAlign.CENTER});
+        this._row.set_pivot_point(0.5, 0.5);        // flip turns around the centre
+        this._content = new St.BoxLayout({
+            x_expand: true,
+            x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
-            style: `color: ${WHITE}; font-weight: bold;`,
         });
-        this.add_child(this._greet);
+        this._row.add_child(this._content);
+        this.add_child(this._row);
+        this._icons = new Map();        // "name|colour" -> Gio.BytesIcon (or null)
+        this._sig = null;               // shape of what is drawn now
+        this._items = [];
 
         // left click = settings, middle click = next good thought right now
         this.connect('button-press-event', (_actor, event) => {
@@ -112,8 +204,14 @@ class InformerIndicator extends PanelMenu.Button {
         this._prevBat = null;
         this._lastHour = null;
         this._lastSlot = null;
-        this._curText = null;
-        this._curColor = null;
+        this._want = null;              // what should be on screen: {parts, color, minEm}
+        this._wantKey = null;
+        this._wantGroup = null;
+        this._shown = false;            // has anything been drawn yet?
+        this._rolling = false;          // old text is on its way out
+        this._gen = 0;                  // cancels stale animation callbacks
+        this._netPrev = null;
+        this._speed = {down: 0, up: 0};
         this._busy = {};
         this._pending = {};
         this._deb = {};
@@ -142,18 +240,23 @@ class InformerIndicator extends PanelMenu.Button {
         // extra event sources (now playing, USB, internet, calendar ...)
         const ctx = {settings: this._s, post: o => this._flash(o.text, o.kind, o.cat, o)};
         this._sources = [];
+        this._weather = null;
         for (const S of [MediaSource, UsbSource, KeyboardSource, CameraSource,
-            InternetSource, SystemSource, CalendarSource]) {
+            InternetSource, SystemSource, CalendarSource, WeatherSource]) {
             try {
-                this._sources.push(new S(ctx));
+                const src = new S(ctx);
+                this._sources.push(src);
+                if (S === WeatherSource)
+                    this._weather = src;        // the idle line shows its temperature
             } catch (e) {
                 console.error(`informer: ${S.name} could not start: ${e}`);
             }
         }
 
-        // light 1-second heartbeat: battery file read, render, safety-net polls
+        // light 1-second heartbeat: battery + network speed file reads, render, safety-net polls
         this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             this._checkBattery();
+            this._sampleNet();
             this._render();
             this._tick = (this._tick + 1) % 3;
             if (this._tick === 0)
@@ -215,7 +318,7 @@ class InformerIndicator extends PanelMenu.Button {
             return;
         const base = this._int('flash-seconds') * 1000;
         const ms = opts.ms ?? Math.round(base * (prio >= CRITICAL ? 1.5 : 1));
-        this._q.post({text, kind, prio, ms, key: opts.key ?? null}, Date.now());
+        this._q.post({text, kind, prio, ms, key: opts.key ?? null, cat}, Date.now());
         this._sync();
     }
 
@@ -243,37 +346,193 @@ class InformerIndicator extends PanelMenu.Button {
         });
     }
 
+    // ------------------------------------------------ network speed
+    // Bytes per second since the last tick, summed over the real interfaces.
+    _sampleNet() {
+        const now = GLib.get_monotonic_time() / 1e6;
+        const cur = readNetBytes();
+        const prev = this._netPrev;
+        this._netPrev = {t: now, d: cur};
+        if (!prev)
+            return;
+        const dt = now - prev.t;
+        if (dt < 0.2)
+            return;
+        let rx = 0;
+        let tx = 0;
+        for (const [name, c] of Object.entries(cur)) {
+            const p = prev.d[name];
+            if (!p)
+                continue;                       // interface just appeared
+            rx += Math.max(0, c.rx - p.rx);     // counters can reset: never go negative
+            tx += Math.max(0, c.tx - p.tx);
+        }
+        this._speed = {down: rx / dt, up: tx / dt};
+    }
+
     // ------------------------------------------------ display + animation
     _paint(cur) {
         if (cur) {
-            this._show(cur.text, this._colorFor(cur.kind));
-        } else {
-            const h = new Date().getHours();
-            this._show(`${greetingWord(h)}, ${this._str('name') || 'Umesh'}`, this._colorFor('greeting'));
+            const icon = this._bool('show-icons') ? iconFor(cur) : null;
+            this._show(icon ? [{icon}, {text: cur.text}] : [{text: cur.text}],
+                this._colorFor(cur.kind), `msg:${cur.text}`);
+            return;
         }
+        const color = this._colorFor('greeting');
+        if (this._str('idle-display') === 'greeting') {
+            const h = new Date().getHours();
+            this._show([{text: `${greetingWord(h)}, ${this._str('name') || 'Umesh'}`}],
+                color, 'idle:greeting');
+            return;
+        }
+        // default: live network speed (+ temperature). Same group every second,
+        // so the numbers change quietly and only the arrival is animated.
+        const down = fmtSpeed(this._speed.down);
+        const up = fmtSpeed(this._speed.up);
+        const temp = this._bool('idle-show-temp') ? this._weather?.brief() : '';
+        let parts;
+        if (this._bool('show-icons')) {
+            parts = [{icon: 'down'}, {text: down}, {icon: 'up', gap: 12}, {text: up}];
+            if (temp)
+                parts.push({icon: 'sun', gap: 14}, {text: temp});
+        } else {
+            parts = [{text: `↓ ${down}   ↑ ${up}${temp ? `   ·   ${temp}` : ''}`}];
+        }
+        this._show(parts, color, 'idle:speed', temp ? IDLE_MIN_EM_TEMP : IDLE_MIN_EM);
     }
 
-    _show(text, color) {
-        if (text === this._curText && color === this._curColor)
+    // parts: [{icon: 'name', gap?}, {text, gap?}] drawn left to right.
+    // group: a change of group is animated; a change of text inside the same
+    // group (the speed numbers) is just drawn.
+    _show(parts, color, group, minEm = 0) {
+        const key = JSON.stringify([parts, color, minEm]);
+        if (key === this._wantKey)
             return;
-        const changed = text !== this._curText;
-        this._curText = text;
-        this._curColor = color;
-        this._greet.set_text(text);
-        this._greet.set_style(`color: ${color}; font-weight: bold;`);
+        const newGroup = group !== this._wantGroup || !this._shown;
+        this._want = {parts, color, minEm};
+        this._wantKey = key;
+        this._wantGroup = group;
 
-        if (changed) {
-            const dx = this._str('direction') === 'left-to-right' ? -SLIDE_PX : SLIDE_PX;
-            this._greet.remove_all_transitions();
-            this._greet.translation_x = dx;
-            this._greet.opacity = 0;
-            this._greet.ease({
-                translation_x: 0,
-                opacity: 255,
-                duration: SLIDE_MS,
-                mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+        if (!newGroup) {
+            if (!this._rolling)         // while the old text rolls out, the new one is drawn on arrival
+                this._apply();
+            return;
+        }
+        this._animate();
+    }
+
+    // icon file -> St-loadable icon, recoloured to the message colour
+    // (the icon files use #ffffff for the parts that take the colour)
+    _gicon(name, color) {
+        const key = `${name}|${color}`;
+        if (!this._icons.has(key)) {
+            const svg = readFile(`${this._ext.path}/icons/${name}.svg`);
+            let g = null;
+            if (svg) {
+                try {
+                    g = new Gio.BytesIcon({
+                        bytes: GLib.Bytes.new(new TextEncoder().encode(svg.replace(/#ffffff/gi, color))),
+                    });
+                } catch (e) {
+                    console.error(`informer: icon ${name}: ${e}`);
+                }
+            }
+            this._icons.set(key, g);
+        }
+        return this._icons.get(key);
+    }
+
+    // Rebuild the widgets only when the shape (which icons, which colour)
+    // changes; otherwise just update the label texts in place.
+    _apply() {
+        const {parts, color, minEm} = this._want;
+        this._row.set_style(minEm ? `min-width: ${minEm}em;` : '');
+        const shown = parts.filter(p => !p.icon || this._gicon(p.icon, color));
+        const sig = `${color}|${shown.map(p => p.icon ?? 't').join(',')}`;
+        if (sig !== this._sig) {
+            this._sig = sig;
+            this._content.destroy_all_children();
+            this._items = shown.map((p, i) => {
+                const margin = (i > 0 && p.gap ? `margin-left: ${p.gap}px;` : '');
+                let w;
+                if (p.icon) {
+                    w = new St.Icon({
+                        gicon: this._gicon(p.icon, color),
+                        icon_size: ICON_PX,
+                        y_align: Clutter.ActorAlign.CENTER,
+                        style: `${margin} margin-right: 4px;`,
+                    });
+                } else {
+                    w = new St.Label({
+                        y_align: Clutter.ActorAlign.CENTER,
+                        style: `color: ${color}; font-weight: bold; ${margin}`,
+                    });
+                }
+                this._content.add_child(w);
+                return w;
             });
         }
+        shown.forEach((p, i) => {
+            if (!p.icon)
+                this._items[i].set_text(p.text);
+        });
+    }
+
+    _pickMode() {
+        const d = this._str('direction');
+        if (d === 'random')
+            return ANIM_MODES[Math.floor(Math.random() * ANIM_MODES.length)];
+        return ANIM_MODES.includes(d) ? d : 'right-to-left';
+    }
+
+    _animate() {
+        const a = this._row;
+        const gen = ++this._gen;
+        const mode = this._pickMode();
+        a.remove_all_transitions();
+        this._rolling = false;
+        // vertical movement is clipped to the bar so the text rolls in and out of it
+        this.clip_to_allocation = mode === 'top-to-bottom' || mode === 'bottom-to-top';
+
+        if (!this._shown || !ROLLING.has(mode)) {
+            this._shown = true;
+            this._apply();
+            this._enter(mode);
+            return;
+        }
+
+        // roll: old text leaves, then the new text arrives
+        this._rolling = true;
+        a.ease({
+            ...exitTo(mode),
+            opacity: 0,
+            duration: ROLL_OUT_MS,
+            mode: Clutter.AnimationMode.EASE_IN_QUAD,
+            onComplete: () => {
+                if (gen !== this._gen || this._destroyed)
+                    return;                  // a newer message took over
+                this._rolling = false;
+                this._apply();
+                this._enter(mode);
+            },
+        });
+    }
+
+    _enter(mode) {
+        const a = this._row;
+        a.translation_x = 0;
+        a.translation_y = 0;
+        a.rotation_angle_x = 0;
+        Object.assign(a, enterFrom(mode));
+        a.opacity = 0;
+        a.ease({
+            translation_x: 0,
+            translation_y: 0,
+            rotation_angle_x: 0,
+            opacity: 255,
+            duration: ROLLING.has(mode) ? ROLL_IN_MS : SLIDE_MS,
+            mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+        });
     }
 
     // ------------------------------------------------ good thoughts
@@ -698,7 +957,9 @@ class InformerIndicator extends PanelMenu.Button {
             this._sid = 0;
         }
         this._q.clear();
-        this._greet?.remove_all_transitions();
+        this._gen++;
+        this._row?.remove_all_transitions();
+        this._icons.clear();
         super.destroy();
     }
 });
