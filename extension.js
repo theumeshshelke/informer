@@ -158,7 +158,7 @@ function iconFor(m) {
     case 'pomodoro': return 'timer';
     case 'clipboard': return 'clipboard';
     case 'screenshot': return 'screenshot';
-    case 'download': return 'down';
+    case 'download': return 'download';
     case 'reminder':
     case 'notifications': return 'alert';
     case 'latency': return 'alert';

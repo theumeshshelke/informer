@@ -35,4 +35,4 @@
 - Bluetooth icon replaced with a new Bluetooth sign (`icons/bluetooth.svg`).
 - New shortcuts: none. New network hosts: none.
 - Tests: `tests/logic-graph-settingsio.test.mjs`.
-
+- Icons replaced with your SVGs: `screenshot`, `timer`, `clipboard`. New `download` icon for "Download finished" (the `down` arrow stays for the speed line and data used today).
