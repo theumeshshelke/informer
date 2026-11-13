@@ -1,4 +1,8 @@
 # Informer
+
+**[Download the latest version (zip)](https://github.com/theumeshshelke/informer/releases/latest/download/informer@umesh.shell-extension.zip)**
+
+Install: `gnome-extensions install --force informer@umesh.shell-extension.zip`, log out and back in, then `gnome-extensions enable informer@umesh`.
 GNOME Shell top-bar extension: live **network speed** (and the temperature)
 that slides in live updates (green = good, red = bad, amber = warning), plus a
 good thought every few minutes. The old time-based greeting is still there:
