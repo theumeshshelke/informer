@@ -588,5 +588,30 @@
       <default>true</default>
       <summary>Show the icon for notifications messages</summary>
     </key>
+    <key name="idle-show-graph" type="b">
+      <default>false</default>
+      <summary>Show a small download graph (last 60 seconds) after the speed numbers</summary>
+    </key>
+    <key name="idle-show-layout" type="b">
+      <default>false</default>
+      <summary>Show the input language (for example EN) in the bar when more than one is set up</summary>
+    </key>
+    <key name="quiet-follow-dnd" type="b">
+      <default>true</default>
+      <summary>Stay quiet (only Critical shows) while GNOME Do Not Disturb is on</summary>
+    </key>
+    <key name="show-layout" type="b">
+      <default>true</default>
+      <summary>Show input language messages</summary>
+    </key>
+    <key name="priority-layout" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of input language messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-layout" type="b">
+      <default>true</default>
+      <summary>Show the icon for layout messages</summary>
+    </key>
   </schema>
 </schemalist>

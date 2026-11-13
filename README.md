@@ -10,7 +10,7 @@ thought right away.
 ## Icons
 SVG icons in `icons/` sit next to the text: arrows for download / upload, a
 sun for the weather, and icons for Wi-Fi, Bluetooth, volume, battery, airplane
-mode, a timer, a clipboard, a screenshot frame, now playing, updates, good thoughts and warnings. They take the colour
+mode, a timer, a clipboard, a screenshot frame, Do Not Disturb, a keyboard, now playing, updates, good thoughts and warnings. They take the colour
 of the message. Switch off in Settings > General > Show icons (the bar then
 shows plain `↓ ↑` text). To change an icon, replace the file in `icons/`
 (keep the name); parts filled with `#ffffff` take the message colour, any
@@ -79,6 +79,18 @@ The latency is the time to connect to 1.1.1.1:443 every 10 seconds (no `ping` co
 ## Reminders (new)
 The Reminders page lets you add messages that show at a time you pick (text, hour and minute, days of the week, repeat or once). Presets: Drink water, Stretch, Fixed time event. A reminder shows once per day and time, even if you are a minute or two late. No network.
 
+## Speed graph (new)
+Settings > General > "Show a small speed graph" (off by default) draws the download speed of the last 60 seconds as a small line after the speed numbers. It has a fixed size, so the bar never jumps. It is drawn once a second, only while the speed line is on screen, and the samples are only collected while the switch is on.
+
+## Input language (new)
+When you switch keyboard layout, a Low priority message says "Language: EN" (Messages > Input language). Settings > General > "Show the input language" (off by default) also puts it in the speed line, but only if you have more than one layout.
+
+## Do Not Disturb (new)
+When GNOME's Do Not Disturb is on, Informer stays quiet like in quiet hours: only Critical messages show (Settings > General > Quiet hours > "Stay quiet in Do Not Disturb", on by default). A message "Do Not Disturb ON / OFF" shows when you switch it (this message uses the "VPN, hotspot, airplane mode" switch in Messages).
+
+## Backup (new)
+Settings > General > Backup: **Export** saves all settings to a `.json` file, **Import** loads one. Import only accepts keys that exist, with the right type and range; anything else is skipped and named in a short message. The "data used today" counter is never exported or imported. Reopen the settings window after an import to see every change.
+
 ## Notices (new)
 - **Screenshot saved**: watches `~/Pictures/Screenshots` (and `~/Pictures` for files named Screenshot...). On by default.
 - **Download finished**: watches your Downloads folder. A file counts as done when its size stays the same for 2 seconds. Temporary files (`.crdownload`, `.part`, `.download`) and hidden files are ignored. On by default.
@@ -90,13 +102,15 @@ Folder watching and clipboard listening only run while their switch is on.
 - `api.open-meteo.com`, `geocoding-api.open-meteo.com`: weather (can be turned off).
 - `ipwho.is`: place of your IP for the weather when no city is set, the public IP in the menu (at most every 30 minutes, only while the menu is open or after a VPN connects), and VPN location. Looked up at login only if you turn on "Look up the public IP at login".
 - `1.1.1.1:443`: latency and internet checks (a plain connection, no data sent).
+- Phase D (speed graph, input language, Do Not Disturb, backup) adds no network access.
 
 ## Files
 - `extension.js` - the bar item, queue wiring, Wi-Fi / Bluetooth / volume / mic / battery
-- `sources.js` - now playing, USB, lock keys, camera, internet, system warnings, calendar, weather
+- `sources.js` - now playing, USB, lock keys, camera, internet, system warnings, calendar, weather, input language, ping, public IP, clipboard, files, reminders, notifications
 - `speedlogic.js`, `usage.js`, `weatherlogic.js` - small logic files (no GNOME imports, easy to test)
 - `sysinfo.js` - small helpers for the dropdown (no GNOME imports)
 - `pomodoro.js`, `pinglogic.js`, `publicip.js` - focus timer, latency and public IP logic (no GNOME imports)
+- `sparkline.js`, `settingsio.js` - speed graph maths and settings export / import checks (no GNOME imports)
 - `reminders.js`, `filters.js` - reminder times and file / notification filters (no GNOME imports)
 - `queue.js` - the priority queue (no GNOME imports, easy to test)
 - `icons/` - the SVG icons

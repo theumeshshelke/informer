@@ -8,6 +8,7 @@ import Meta from 'gi://Meta';
 import Soup from 'gi://Soup?version=3.0';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as Keyboard from 'resource:///org/gnome/shell/ui/status/keyboard.js';
 
 import {run, readFile, listDir, clip, fmtBytes, fmtDuration} from './util.js';
 import {rainSoon, weatherAlerts} from './weatherlogic.js';
@@ -1347,6 +1348,61 @@ export class NotifySource extends Source {
     destroy() {
         this.settings.disconnect(this._id);
         this._unhook();
+        super.destroy();
+    }
+}
+
+// ---------------------------------------------------------------- Input language
+// Watches the keyboard layout / input method switcher of the Shell (the "EN" in the top bar).
+// Says "Language: EN" when you switch. The idle line can show the short name too
+// (only when more than one input source is set up).
+export class LayoutSource extends Source {
+    constructor(ctx) {
+        super(ctx);
+        this._mgr = null;
+        this._ids = [];
+        this._last = '';
+        try {
+            this._mgr = Keyboard.getInputSourceManager();
+        } catch (e) {
+            console.warn(`informer: input sources not available, language messages are off: ${e}`);
+            return;
+        }
+        this._last = this.short();
+        // fires on every switch (and with a null old source when an input method changes a property)
+        this._ids.push(this._mgr.connect('current-source-changed', () => this._check()));
+    }
+
+    // "EN" (empty when unknown)
+    short() {
+        const s = this._mgr?.currentSource;
+        return `${s?.shortName || s?.displayName || ''}`.toUpperCase();
+    }
+
+    // how many input sources are set up
+    count() {
+        return this._mgr ? Object.keys(this._mgr.inputSources ?? {}).length : 0;
+    }
+
+    _check() {
+        if (this.dead)
+            return;
+        const now = this.short();
+        if (!now || now === this._last)       // same layout: ignore property-only changes
+            return;
+        this._last = now;
+        if (this.count() > 1)
+            this.post({text: `Language: ${now}`, kind: 'info', cat: 'layout', key: 'layout'});
+    }
+
+    destroy() {
+        for (const id of this._ids) {
+            try {
+                this._mgr.disconnect(id);
+            } catch (e) { /* ignore */ }
+        }
+        this._ids = [];
+        this._mgr = null;
         super.destroy();
     }
 }

@@ -33,6 +33,7 @@ export const CATEGORIES = [
     {key: 'updates', title: 'Updates available', sub: 'Software updates waiting', prio: LOW, toggle: true},
     {key: 'reminder', title: 'Your reminders', sub: 'Reminders you set in the Reminders page', prio: HIGH, toggle: true},
     {key: 'pomodoro', title: 'Focus timer', sub: 'Focus and break phases ending', prio: HIGH, toggle: true},
+    {key: 'layout', title: 'Input language', sub: '"Language: EN" when you switch keyboard layout', prio: LOW, toggle: true},
     {key: 'weatheralert', title: 'Weather alerts', sub: 'Rain soon, very hot or very cold', prio: HIGH, toggle: true},
     {key: 'weather', title: 'Weather', sub: 'Temperature, conditions, humidity, wind. Turn on or off in the Weather page', prio: LOW, toggle: false},
     {key: 'hourly', title: 'New line every hour', sub: 'The hourly one-liner', prio: LOW, toggle: true},

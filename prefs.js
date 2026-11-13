@@ -9,6 +9,7 @@ import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/ex
 
 import {CATEGORIES, PRIORITY_NAMES, THOUGHTS} from './data.js';
 import {DAYS_ALL, parseReminders, serializeReminders} from './reminders.js';
+import {NEVER, buildExport, parseImport, summary, validateSettings} from './settingsio.js';
 
 function spinRow(settings, key, title, subtitle, lower, upper) {
     const row = new Adw.SpinRow({
@@ -118,6 +119,121 @@ function daysText(mask) {
     return DAY_LETTERS.filter((_d, i) => mask & (1 << i)).join(', ');
 }
 
+// ---- export / import of settings --------------------------------------------
+// One plain description per schema key, for settingsio.js: {name, type, range}
+function schemaSpec(settings) {
+    const schema = settings.settings_schema;
+    return schema.list_keys().map(name => {
+        const key = schema.get_key(name);
+        return {name, type: key.get_value_type().dup_string(), range: rangeOf(key)};
+    });
+}
+
+// Gio.SettingsSchemaKey.get_range() is a variant (sv): 'range' (min, max), 'enum' (list) or 'type'
+function rangeOf(key) {
+    try {
+        const r = key.get_range();
+        const kind = r.get_child_value(0).unpack();
+        const inner = r.get_child_value(1).get_variant();
+        if (kind === 'range') {
+            return {kind, min: inner.get_child_value(0).unpack(), max: inner.get_child_value(1).unpack()};
+        }
+        if (kind === 'enum')
+            return {kind, values: inner.deep_unpack()};
+    } catch (e) { /* no usable range: the type check still applies */ }
+    return null;
+}
+
+// the user closed the file dialog without choosing
+function dismissed(e) {
+    return !!e?.matches && (e.matches(Gtk.DialogError, Gtk.DialogError.DISMISSED) ||
+        e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED));
+}
+
+function buildBackupGroup(settings, window) {
+    const group = new Adw.PreferencesGroup({
+        title: 'Backup',
+        description: 'Save your settings to a file, or load them on another computer. ' +
+            'The "data used today" counter is not included. Unknown or wrong values are skipped.',
+    });
+    const toast = text => window.add_toast(new Adw.Toast({title: GLib.markup_escape_text(text, -1), timeout: 6}));
+    const jsonFilter = new Gtk.FileFilter({name: 'JSON files'});
+    jsonFilter.add_pattern('*.json');
+
+    const row = new Adw.ActionRow({title: 'Settings file', subtitle: 'Export to a file, or import from one'});
+    const exportBtn = new Gtk.Button({label: 'Export', valign: Gtk.Align.CENTER});
+    const importBtn = new Gtk.Button({label: 'Import', valign: Gtk.Align.CENTER});
+    row.add_suffix(exportBtn);
+    row.add_suffix(importBtn);
+    group.add(row);
+
+    exportBtn.connect('clicked', () => {
+        const dialog = new Gtk.FileDialog({title: 'Export Informer settings', initial_name: 'informer-settings.json'});
+        dialog.default_filter = jsonFilter;
+        dialog.save(window, null, (d, res) => {
+            try {
+                const file = d.save_finish(res);
+                const values = {};
+                for (const k of schemaSpec(settings)) {
+                    if (!NEVER.includes(k.name))
+                        values[k.name] = settings.get_value(k.name).deep_unpack();
+                }
+                const bytes = new TextEncoder().encode(buildExport(values));
+                file.replace_contents(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+                toast('Settings saved');
+            } catch (e) {
+                if (!dismissed(e))
+                    toast(`Could not save the file: ${e.message}`);
+            }
+        });
+    });
+
+    importBtn.connect('clicked', () => {
+        const dialog = new Gtk.FileDialog({title: 'Import Informer settings'});
+        dialog.default_filter = jsonFilter;
+        dialog.open(window, null, (d, res) => {
+            try {
+                const file = d.open_finish(res);
+                const [, contents] = file.load_contents(null);
+                if (contents.length > 1000000) {
+                    toast('This file is too big to be a settings file');
+                    return;
+                }
+                const parsed = parseImport(new TextDecoder().decode(contents));
+                if (!parsed.ok) {
+                    toast(parsed.error);
+                    return;
+                }
+                const spec = schemaSpec(settings);
+                const {valid, invalid} = validateSettings(spec, parsed.settings);
+                const schema = settings.settings_schema;
+                const byName = new Map(spec.map(k => [k.name, k]));
+                let done = 0;
+                settings.delay();           // one write for everything
+                try {
+                    for (const [name, value] of Object.entries(valid)) {
+                        // second check, by GLib itself: the real type and the schema's own range
+                        const variant = new GLib.Variant(byName.get(name).type, value);
+                        if (!schema.get_key(name).range_check(variant)) {
+                            invalid.push({key: name, reason: 'out of range'});
+                            continue;
+                        }
+                        settings.set_value(name, variant);
+                        done++;
+                    }
+                } finally {
+                    settings.apply();
+                }
+                toast(`${summary(done, invalid)}${done ? '. Reopen settings to see everything.' : ''}`);
+            } catch (e) {
+                if (!dismissed(e))
+                    toast(`Could not read the file: ${e.message}`);
+            }
+        });
+    });
+    return group;
+}
+
 // the Reminders page: a list kept in memory, written back as JSON on every change
 function buildRemindersPage(settings, window) {
     const page = new Adw.PreferencesPage({title: 'Reminders', icon_name: 'alarm-symbolic'});
@@ -225,6 +341,15 @@ function buildRemindersPage(settings, window) {
     addRow.add_suffix(blank);
     addGroup.add(addRow);
 
+    // an import (or a reset) changed the setting from outside: show it, do not overwrite it later
+    settings.connect('changed::reminders', () => {
+        const cur = settings.get_string('reminders');
+        if (cur === serializeReminders(list))
+            return;                 // our own save
+        list = parseReminders(cur);
+        rebuild();
+    });
+
     rebuild();
     return page;
 }
@@ -271,6 +396,10 @@ export default class InformerPrefs extends ExtensionPreferences {
 
         basics.add(switchRow(settings, 'idle-show-temp', 'Show temperature next to the speed',
             'Needs the weather (Weather page)'));
+        basics.add(switchRow(settings, 'idle-show-graph', 'Show a small speed graph',
+            'The download speed of the last 60 seconds, next to the numbers'));
+        basics.add(switchRow(settings, 'idle-show-layout', 'Show the input language',
+            'For example EN. Only when you have more than one keyboard layout'));
 
         basics.add(switchRow(settings, 'speed-colors', 'Colour the speed',
             'Green when fast, amber when slow, red when there is no link'));
@@ -309,6 +438,8 @@ export default class InformerPrefs extends ExtensionPreferences {
         quiet.add(spinRow(settings, 'quiet-end', 'Until', 'Hour of the day (0 to 23)', 0, 23));
         quiet.add(switchRow(settings, 'quiet-fullscreen', 'Stay quiet while fullscreen',
             'Videos, games, presentations'));
+        quiet.add(switchRow(settings, 'quiet-follow-dnd', 'Stay quiet in Do Not Disturb',
+            'When GNOME Do Not Disturb is on, only Critical messages show'));
 
         // ---- focus timer
         const focus = new Adw.PreferencesGroup({
@@ -349,6 +480,9 @@ export default class InformerPrefs extends ExtensionPreferences {
         net.add(spinRow(settings, 'ping-warn-ms', 'Warn above (ms)', 'Turn the warning off in Messages', 50, 5000));
         net.add(switchRow(settings, 'public-ip-at-start', 'Look up the public IP at login',
             'Otherwise it is looked up only when a VPN connects or the menu is open'));
+
+        // ---- backup
+        general.add(buildBackupGroup(settings, window));
 
         // ================================================= Weather
         const weatherPage = new Adw.PreferencesPage({
@@ -527,6 +661,15 @@ export default class InformerPrefs extends ExtensionPreferences {
                 save();
                 return GLib.SOURCE_REMOVE;
             });
+        });
+        // an import changed the thoughts from outside: show them (our own save leaves the text as it is)
+        settings.connect('changed::thoughts', () => {
+            const [start, end] = buffer.get_bounds();
+            const mine = buffer.get_text(start, end, false)
+                .split('\n').map(l => l.trim()).filter(Boolean).join('\n');
+            const now = settings.get_strv('thoughts').join('\n');
+            if (mine !== now)
+                buffer.set_text(now, -1);
         });
         window.connect('close-request', () => {
             if (saveTimer) {

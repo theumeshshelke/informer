@@ -28,13 +28,14 @@ import {CATEGORIES, HIGH, HOURLY, LOW, NORMAL, CRITICAL, THOUGHTS} from './data.
 import {MessageQueue} from './queue.js';
 import {levelColor, speedLevel} from './speedlogic.js';
 import {UsageTracker} from './usage.js';
+import {RingBuffer, graphPoints, hexToRgb} from './sparkline.js';
 import {batteryTime, fmtHM, parseLocalIp, parseWifi} from './sysinfo.js';
 import {Pomodoro, eventText, fmtClock, labelFor} from './pomodoro.js';
 import {placeText} from './publicip.js';
 import {clip, fmtBytes, listDir, readFile, run} from './util.js';
 import {
     CalendarSource, CameraSource, InternetSource, KeyboardSource,
-    ClipboardSource, FilesSource, MediaSource, NotifySource, PingSource, PublicIpSource,
+    ClipboardSource, FilesSource, LayoutSource, MediaSource, NotifySource, PingSource, PublicIpSource,
     ReminderSource, SystemSource, UsbSource, WeatherSource,
 } from './sources.js';
 
@@ -47,6 +48,10 @@ const ROLL_IN_MS = 280;     // new text arriving (up / down / flip)
 const IDLE_MIN_EM = 14;     // minimum width of the speed line, so the bar does not jitter
 const IDLE_MIN_EM_TEMP = 19;   // same, when the temperature is shown too
 const ICON_PX = 18;         // icon size in the bar
+const GRAPH_W = 60;         // speed graph size in the bar (fixed, so the row never changes size)
+const GRAPH_H = 16;
+const GRAPH_N = 60;         // graph shows the last 60 seconds
+const DND_SCHEMA = 'org.gnome.desktop.notifications';   // GNOME Do Not Disturb lives here
 const WHITE = '#ffffff';    // fallback only - colours are set in the Informer settings
 const UNPLUG_REPEAT_MS = 10 * 60 * 1000;   // repeat "unplug the charger" this often
 const LOW_REPEAT_MS = 3 * 60 * 1000;       // repeat very-low-battery warnings this often
@@ -140,7 +145,11 @@ function iconFor(m) {
             return 'battery-charging';
         return pct <= 30 && /^Discharging/.test(m.text) ? 'battery-low' : 'battery-full';
     case 'batterywarn': return m.key === 'unplug' ? 'battery-full' : 'battery-low';
-    case 'modes': return m.key === 'airplane' ? 'airplane' : m.key === 'hotspot' ? 'wifi-on' : null;
+    case 'modes':
+        if (m.key === 'dnd')
+            return 'dnd';
+        return m.key === 'airplane' ? 'airplane' : m.key === 'hotspot' ? 'wifi-on' : null;
+    case 'layout': return 'keyboard';
     case 'media': return 'music';
     case 'updates': return 'update';
     case 'thought': return 'thought';
@@ -258,6 +267,11 @@ class InformerIndicator extends PanelMenu.Button {
         this._netPrev = null;
         this._speed = {down: 0, up: 0};
         this._linkUp = true;
+        this._graph = new RingBuffer(GRAPH_N);   // last 60 download speeds (only filled while the graph is on)
+        this._graphArea = null;         // the St.DrawingArea in the bar, while it is drawn
+        this._graphSig = 0;
+        this._graphColor = WHITE;
+        this._layout = null;
         // focus timer state (ticked by the 1 s heartbeat only while it is active)
         this._pom = new Pomodoro(() => ({
             focus: this._int('pomodoro-focus-min'),
@@ -285,6 +299,7 @@ class InformerIndicator extends PanelMenu.Button {
             this._render();
         });
 
+        this._initDnd();
         this._render();
         this._pollSlow();
         this._pollVol();
@@ -301,7 +316,7 @@ class InformerIndicator extends PanelMenu.Button {
         this._pub = null;
         for (const S of [MediaSource, UsbSource, KeyboardSource, CameraSource,
             InternetSource, SystemSource, CalendarSource, WeatherSource, PingSource, PublicIpSource,
-            ClipboardSource, FilesSource, ReminderSource, NotifySource]) {
+            ClipboardSource, FilesSource, ReminderSource, NotifySource, LayoutSource]) {
             try {
                 const src = new S(ctx);
                 this._sources.push(src);
@@ -313,6 +328,8 @@ class InformerIndicator extends PanelMenu.Button {
                     this._ping = src;           // idle line + dropdown
                 if (S === PublicIpSource)
                     this._pub = src;            // dropdown + VPN location
+                if (S === LayoutSource)
+                    this._layout = src;         // the idle line can show the input language
             } catch (e) {
                 console.error(`informer: ${S.name} could not start: ${e}`);
             }
@@ -332,6 +349,7 @@ class InformerIndicator extends PanelMenu.Button {
         this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             this._checkBattery();
             this._sampleNet();
+            this._graphTick();
             this._render();
             this._pomTick();
             this._refreshMenu();
@@ -563,6 +581,9 @@ class InformerIndicator extends PanelMenu.Button {
 
     // Quiet hours and fullscreen: only Critical messages get through.
     _quiet() {
+        // GNOME Do Not Disturb is on (banners off)
+        if (this._dnd && this._bool('quiet-follow-dnd') && !this._dnd.get_boolean('show-banners'))
+            return true;
         if (this._bool('quiet-enabled')) {
             const h = new Date().getHours();
             const from = this._int('quiet-start');
@@ -655,6 +676,10 @@ class InformerIndicator extends PanelMenu.Button {
         }
         this._speed = {down: rx / dt, up: tx / dt};
         this._usage.add(rx, tx);          // deltas only: a reboot resets the counters, not the total
+        if (this._bool('idle-show-graph'))
+            this._graph.push(this._speed.down);
+        else if (this._graph.length)
+            this._graph.clear();          // switched off: forget the old samples
         if (this._bool('speed-colors'))
             this._linkUp = linkIsUp(Object.keys(cur));
         this._usageTick();
@@ -725,20 +750,31 @@ class InformerIndicator extends PanelMenu.Button {
         }
         const pingMs = this._bool('idle-show-ping') ? this._ping?.last : null;
         const ping = pingMs != null ? `${pingMs} ms` : '';
+        const graph = this._bool('idle-show-graph');
+        // input language: only when more than one is set up (otherwise it is just noise)
+        const lang = this._bool('idle-show-layout') && (this._layout?.count() ?? 0) > 1 ? this._layout.short() : '';
         let parts;
         if (this._bool('show-icons')) {
             parts = [{icon: 'down', color: sc}, {text: down, color: sc},
                 {icon: 'up', gap: 12, color: sc}, {text: up, color: sc}];
+            if (graph)
+                parts.push({graph: true, gap: 12, color: sc});
             if (ping)
                 parts.push({text: ping, gap: 14});
+            if (lang)
+                parts.push({text: lang, gap: 14});
             if (temp)
                 parts.push({icon: 'sun', gap: 14}, {text: temp});
         } else {
-            parts = [{text: `↓ ${down}   ↑ ${up}${ping ? `   ·   ${ping}` : ''}${temp ? `   ·   ${temp}` : ''}`}];
+            parts = [{text: `↓ ${down}   ↑ ${up}${ping ? `   ·   ${ping}` : ''}${lang ? `   ·   ${lang}` : ''}${temp ? `   ·   ${temp}` : ''}`}];
+            if (graph)
+                parts.push({graph: true, gap: 12, color: sc});
         }
-        // own group while the ping is shown: only its arrival animates, never a tick
-        this._show(parts, this._bool('show-icons') ? color : sc, ping ? 'idle:speed+ping' : 'idle:speed',
-            (temp ? IDLE_MIN_EM_TEMP : IDLE_MIN_EM) + (ping ? 5 : 0));
+        // own group for each extra (ping, language, graph): only its arrival animates, never a tick.
+        // The graph has a fixed size and a fixed slot, so the row never changes size.
+        const group = `idle:speed${ping ? '+ping' : ''}${lang ? '+layout' : ''}${graph ? '+graph' : ''}`;
+        this._show(parts, this._bool('show-icons') ? color : sc, group,
+            (temp ? IDLE_MIN_EM_TEMP : IDLE_MIN_EM) + (ping ? 5 : 0) + (lang ? 3 : 0) + (graph ? 5 : 0));
     }
 
     // parts: [{icon: 'name', gap?}, {text, gap?}] drawn left to right.
@@ -787,15 +823,18 @@ class InformerIndicator extends PanelMenu.Button {
     _apply() {
         const {parts, color, minEm} = this._want;
         this._row.set_style(minEm ? `min-width: ${minEm}em;` : '');
-        const shown = parts.filter(p => !p.icon || this._gicon(p.icon, p.color ?? color));
-        const sig = `${color}|${shown.map(p => `${p.icon ?? 't'}${p.color ?? ''}`).join(',')}`;
+        const shown = parts.filter(p => p.graph || !p.icon || this._gicon(p.icon, p.color ?? color));
+        const sig = `${color}|${shown.map(p => `${p.graph ? 'g' : (p.icon ?? 't')}${p.color ?? ''}`).join(',')}`;
         if (sig !== this._sig) {
             this._sig = sig;
+            this._dropGraph();              // the old graph widget goes away with its children
             this._content.destroy_all_children();
             this._items = shown.map((p, i) => {
                 const margin = (i > 0 && p.gap ? `margin-left: ${p.gap}px;` : '');
                 let w;
-                if (p.icon) {
+                if (p.graph) {
+                    w = this._makeGraph(p.color ?? color, margin);
+                } else if (p.icon) {
                     w = new St.Icon({
                         gicon: this._gicon(p.icon, p.color ?? color),
                         icon_size: ICON_PX,
@@ -813,9 +852,98 @@ class InformerIndicator extends PanelMenu.Button {
             });
         }
         shown.forEach((p, i) => {
-            if (!p.icon)
+            if (!p.icon && !p.graph)
                 this._items[i].set_text(p.text);
         });
+    }
+
+    // ------------------------------------------------ speed graph
+    // fixed-size drawing area: last 60 download speeds as a small filled line
+    _makeGraph(color, margin) {
+        const area = new St.DrawingArea({
+            width: GRAPH_W,
+            height: GRAPH_H,
+            y_align: Clutter.ActorAlign.CENTER,
+            style: margin,
+        });
+        this._graphColor = color;
+        this._graphSig = area.connect('repaint', () => this._drawGraph(area));
+        this._graphArea = area;
+        return area;
+    }
+
+    _dropGraph() {
+        if (this._graphArea && this._graphSig) {
+            try {
+                this._graphArea.disconnect(this._graphSig);
+            } catch (e) { /* already gone */ }
+        }
+        this._graphArea = null;
+        this._graphSig = 0;
+    }
+
+    _drawGraph(area) {
+        if (this._destroyed)
+            return;
+        const cr = area.get_context();
+        try {
+            const [w, h] = area.get_surface_size();
+            const pts = graphPoints(this._graph.values(), GRAPH_N, w, h);
+            if (pts.length < 2)
+                return;
+            const [r, g, b] = hexToRgb(this._graphColor);
+            cr.setSourceRGBA(r, g, b, 0.28);          // soft fill under the line
+            cr.moveTo(pts[0].x, h);
+            for (const p of pts)
+                cr.lineTo(p.x, p.y);
+            cr.lineTo(pts[pts.length - 1].x, h);
+            cr.closePath();
+            cr.fill();
+            cr.setSourceRGBA(r, g, b, 1);             // the line itself
+            cr.setLineWidth(1.5);
+            cr.moveTo(pts[0].x, pts[0].y);
+            for (const p of pts.slice(1))
+                cr.lineTo(p.x, p.y);
+            cr.stroke();
+        } finally {
+            cr.$dispose();
+        }
+    }
+
+    // once a second, only while the graph is on screen in the idle line
+    // (not while a message, the focus timer or the greeting is shown)
+    _graphTick() {
+        if (this._graphArea && !this._rolling && this._wantGroup?.startsWith('idle:speed'))
+            this._graphArea.queue_repaint();
+    }
+
+    // ------------------------------------------------ Do Not Disturb
+    _initDnd() {
+        this._dnd = null;
+        this._dndSig = 0;
+        this._dndOn = false;
+        try {
+            const schema = Gio.SettingsSchemaSource.get_default()?.lookup(DND_SCHEMA, true);
+            if (!schema || !schema.has_key('show-banners'))
+                return;                 // no such schema: DND sync stays off
+            this._dnd = new Gio.Settings({schema_id: DND_SCHEMA});
+            this._dndOn = !this._dnd.get_boolean('show-banners');
+            this._dndSig = this._dnd.connect('changed::show-banners', () => this._dndChanged());
+        } catch (e) {
+            console.error(`informer: Do Not Disturb sync: ${e}`);
+            this._dnd = null;
+        }
+    }
+
+    _dndChanged() {
+        if (this._destroyed || !this._dnd)
+            return;
+        const on = !this._dnd.get_boolean('show-banners');
+        if (on === this._dndOn)
+            return;
+        this._dndOn = on;
+        // force: the person just switched it, so say so even though it makes us quiet
+        this._flash(on ? 'Do Not Disturb ON' : 'Do Not Disturb OFF', 'info', 'modes', {key: 'dnd', force: true});
     }
 
     _pickMode() {
@@ -1311,6 +1439,14 @@ class InformerIndicator extends PanelMenu.Button {
             this.menu.disconnect(this._menuSig);
             this._menuSig = 0;
         }
+        if (this._dnd) {
+            if (this._dndSig)
+                this._dnd.disconnect(this._dndSig);
+            this._dndSig = 0;
+            this._dnd = null;
+        }
+        this._dropGraph();
+        this._graph.clear();
         this._saveUsage();
         this._q.clear();
         this._gen++;

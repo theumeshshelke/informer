@@ -26,3 +26,13 @@
 - Reminders: setting `reminders` (JSON text), category `reminder` (High), `alert` icon, new Reminders page. Module `reminders.js`.
 - Notification mirror: `show-notifications` (default off), `notification-apps` (list of app names), category `notifications` (Normal).
 - Every new category also has `show-`, `priority-` and `icon-` keys. No new network hosts.
+
+## 6 - Phase D
+- Speed graph (D1): setting `idle-show-graph` (default off). Last 60 download samples in a ring buffer, filled only while the switch is on; a fixed 60x16 px drawing area, redrawn once a second only while the speed line is on screen. Idle group `idle:speed+graph`. Module `sparkline.js`.
+- Input language (D2): setting `idle-show-layout` (default off); category `layout` (Low) with `show-layout`, `priority-layout`, `icon-layout`; new source `LayoutSource`; new icon `keyboard`. Message "Language: EN" only when more than one input source is set up.
+- Do Not Disturb (D3): setting `quiet-follow-dnd` (default on). Quiet (only Critical) while `org.gnome.desktop.notifications` `show-banners` is false. Message "Do Not Disturb ON/OFF" (category `modes`, key `dnd`, Info, always shown because you just switched it); new icon `dnd`.
+- Backup (D4): Export / Import buttons (General page). Module `settingsio.js` checks type and range; `data-usage` is never exported or imported. The Reminders page and the thoughts box now follow outside changes (an import).
+- Bluetooth icon replaced with a new Bluetooth sign (`icons/bluetooth.svg`).
+- New shortcuts: none. New network hosts: none.
+- Tests: `tests/logic-graph-settingsio.test.mjs`.
+
