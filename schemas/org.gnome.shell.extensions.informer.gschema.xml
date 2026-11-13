@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.informer" path="/org/gnome/shell/extensions/informer/">
+    <key name="name" type="s">
+      <default>'Umesh'</default>
+      <summary>Name used in the greeting</summary>
+    </key>
+    <key name="flash-seconds" type="i">
+      <default>5</default>
+      <range min="2" max="30"/>
+      <summary>How long a status message stays in the bar</summary>
+    </key>
+    <key name="direction" type="s">
+      <default>'right-to-left'</default>
+      <summary>Slide direction: right-to-left or left-to-right</summary>
+    </key>
+    <key name="thoughts-enabled" type="b">
+      <default>true</default>
+      <summary>Show a good thought regularly</summary>
+    </key>
+    <key name="thought-minutes" type="i">
+      <default>5</default>
+      <range min="1" max="60"/>
+      <summary>Minutes between good thoughts</summary>
+    </key>
+    <key name="thought-seconds" type="i">
+      <default>8</default>
+      <range min="3" max="30"/>
+      <summary>How long a good thought stays in the bar</summary>
+    </key>
+    <key name="show-bluetooth" type="b">
+      <default>true</default>
+      <summary>Show Bluetooth messages</summary>
+    </key>
+    <key name="show-wifi" type="b">
+      <default>true</default>
+      <summary>Show Wi-Fi messages</summary>
+    </key>
+    <key name="show-battery" type="b">
+      <default>true</default>
+      <summary>Show charging / battery messages</summary>
+    </key>
+    <key name="show-volume" type="b">
+      <default>true</default>
+      <summary>Show volume messages</summary>
+    </key>
+    <key name="show-hourly" type="b">
+      <default>true</default>
+      <summary>Show a new line when the hour changes</summary>
+    </key>
+    <key name="color-greeting" type="s">
+      <default>'#ffffff'</default>
+      <summary>Colour of the greeting</summary>
+    </key>
+    <key name="color-good" type="s">
+      <default>'#2ecc71'</default>
+      <summary>Colour for good news (connected, charging, ON)</summary>
+    </key>
+    <key name="color-bad" type="s">
+      <default>'#ff4d4d'</default>
+      <summary>Colour for bad news (disconnected, OFF, discharging, low)</summary>
+    </key>
+    <key name="color-info" type="s">
+      <default>'#ffffff'</default>
+      <summary>Colour for neutral messages and the hourly line</summary>
+    </key>
+    <key name="color-thought" type="s">
+      <default>'#ffffff'</default>
+      <summary>Colour of good thoughts</summary>
+    </key>
+  </schema>
+</schemalist>

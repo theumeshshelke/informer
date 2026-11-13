@@ -1,0 +1,8 @@
+{
+  "uuid": "informer@umesh",
+  "name": "Informer",
+  "description": "Top-bar greeting that slides in live Wi-Fi, Bluetooth, battery and volume updates, plus a good thought every few minutes. Click it to open settings.",
+  "shell-version": ["50", "51"],
+  "settings-schema": "org.gnome.shell.extensions.informer",
+  "version": 2
+}
