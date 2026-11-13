@@ -1,0 +1,592 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.informer" path="/org/gnome/shell/extensions/informer/">
+    <key name="name" type="s">
+      <default>'Umesh'</default>
+      <summary>Name used in the greeting</summary>
+    </key>
+    <key name="flash-seconds" type="i">
+      <default>5</default>
+      <range min="2" max="30"/>
+      <summary>How long a status message stays in the bar</summary>
+    </key>
+    <key name="direction" type="s">
+      <default>'right-to-left'</default>
+      <summary>Animation: right-to-left, left-to-right, top-to-bottom, bottom-to-top, flip or random</summary>
+    </key>
+    <key name="show-icons" type="b">
+      <default>true</default>
+      <summary>Show icons (network arrows, sun, Wi-Fi, battery ...) next to the text</summary>
+    </key>
+    <key name="idle-display" type="s">
+      <default>'speed'</default>
+      <summary>What the bar shows when there is no message: speed (network speed) or greeting</summary>
+    </key>
+    <key name="idle-show-temp" type="b">
+      <default>true</default>
+      <summary>Show the temperature next to the network speed</summary>
+    </key>
+    <key name="weather-enabled" type="b">
+      <default>true</default>
+      <summary>Fetch the weather (Open-Meteo)</summary>
+    </key>
+    <key name="weather-city" type="s">
+      <default>''</default>
+      <summary>City for the weather. Empty = work it out from your IP address</summary>
+    </key>
+    <key name="weather-unit" type="s">
+      <default>'c'</default>
+      <summary>Temperature unit: c (Celsius) or f (Fahrenheit)</summary>
+    </key>
+    <key name="weather-minutes" type="i">
+      <default>15</default>
+      <range min="5" max="120"/>
+      <summary>Minutes between weather updates (and weather messages)</summary>
+    </key>
+    <key name="thoughts-enabled" type="b">
+      <default>true</default>
+      <summary>Show a good thought regularly</summary>
+    </key>
+    <key name="thought-minutes" type="i">
+      <default>5</default>
+      <range min="1" max="60"/>
+      <summary>Minutes between good thoughts</summary>
+    </key>
+    <key name="thought-seconds" type="i">
+      <default>8</default>
+      <range min="3" max="30"/>
+      <summary>How long a good thought stays in the bar</summary>
+    </key>
+    <key name="thoughts" type="as">
+      <default>[]</default>
+      <summary>Your own good thoughts (one per entry)</summary>
+    </key>
+    <key name="use-builtin-thoughts" type="b">
+      <default>true</default>
+      <summary>Also use the built-in good thoughts</summary>
+    </key>
+    <key name="show-internet" type="b">
+      <default>true</default>
+      <summary>Show internet lost / back messages</summary>
+    </key>
+    <key name="show-batterywarn" type="b">
+      <default>true</default>
+      <summary>Show battery reminders messages</summary>
+    </key>
+    <key name="show-calendar" type="b">
+      <default>true</default>
+      <summary>Show calendar events messages</summary>
+    </key>
+    <key name="show-syswarn" type="b">
+      <default>true</default>
+      <summary>Show system warnings messages</summary>
+    </key>
+    <key name="show-camera" type="b">
+      <default>true</default>
+      <summary>Show camera in use messages</summary>
+    </key>
+    <key name="show-usb" type="b">
+      <default>true</default>
+      <summary>Show usb plugged / removed messages</summary>
+    </key>
+    <key name="show-bluetooth" type="b">
+      <default>true</default>
+      <summary>Show Bluetooth messages</summary>
+    </key>
+    <key name="show-wifi" type="b">
+      <default>true</default>
+      <summary>Show Wi-Fi messages</summary>
+    </key>
+    <key name="show-modes" type="b">
+      <default>true</default>
+      <summary>Show vpn, hotspot, airplane mode messages</summary>
+    </key>
+    <key name="show-battery" type="b">
+      <default>true</default>
+      <summary>Show charging / battery messages</summary>
+    </key>
+    <key name="show-volume" type="b">
+      <default>true</default>
+      <summary>Show volume messages</summary>
+    </key>
+    <key name="show-mic" type="b">
+      <default>true</default>
+      <summary>Show microphone messages</summary>
+    </key>
+    <key name="show-keys" type="b">
+      <default>true</default>
+      <summary>Show caps lock / num lock messages</summary>
+    </key>
+    <key name="show-media" type="b">
+      <default>true</default>
+      <summary>Show now playing messages</summary>
+    </key>
+    <key name="show-updates" type="b">
+      <default>true</default>
+      <summary>Show updates available messages</summary>
+    </key>
+    <key name="show-hourly" type="b">
+      <default>true</default>
+      <summary>Show a new line when the hour changes</summary>
+    </key>
+    <key name="priority-internet" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of internet lost / back messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-batterywarn" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of battery reminders messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-calendar" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of calendar events messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-syswarn" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of system warnings messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-camera" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of camera in use messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-usb" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of usb plugged / removed messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-bluetooth" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of bluetooth messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-wifi" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of wi-fi messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-modes" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of vpn, hotspot, airplane mode messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-battery" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of charging / battery status messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-volume" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of volume messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-mic" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of microphone messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-keys" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of caps lock / num lock messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-media" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of now playing messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-updates" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of updates available messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-weather" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of weather messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-hourly" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of new line every hour messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-thought" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of good thoughts messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="quiet-enabled" type="b">
+      <default>false</default>
+      <summary>Hide messages during quiet hours (Critical still shows)</summary>
+    </key>
+    <key name="quiet-start" type="i">
+      <default>22</default>
+      <range min="0" max="23"/>
+      <summary>Quiet hours start (hour, 0-23)</summary>
+    </key>
+    <key name="quiet-end" type="i">
+      <default>7</default>
+      <range min="0" max="23"/>
+      <summary>Quiet hours end (hour, 0-23)</summary>
+    </key>
+    <key name="quiet-fullscreen" type="b">
+      <default>true</default>
+      <summary>Hide messages while an app is fullscreen (Critical still shows)</summary>
+    </key>
+    <key name="charge-limit" type="i">
+      <default>80</default>
+      <range min="50" max="100"/>
+      <summary>Remind me to unplug at this charge percent (100 = off)</summary>
+    </key>
+    <key name="cpu-threshold" type="i">
+      <default>90</default>
+      <range min="50" max="100"/>
+      <summary>CPU use percent that counts as high</summary>
+    </key>
+    <key name="ram-threshold" type="i">
+      <default>90</default>
+      <range min="50" max="99"/>
+      <summary>RAM use percent that counts as high</summary>
+    </key>
+    <key name="temp-threshold" type="i">
+      <default>85</default>
+      <range min="50" max="110"/>
+      <summary>Temperature in Celsius that counts as high</summary>
+    </key>
+    <key name="disk-free-percent" type="i">
+      <default>10</default>
+      <range min="2" max="50"/>
+      <summary>Warn when free disk space falls below this percent</summary>
+    </key>
+    <key name="calendar-lead" type="i">
+      <default>10</default>
+      <range min="1" max="60"/>
+      <summary>Minutes before an event to warn</summary>
+    </key>
+    <key name="color-greeting" type="s">
+      <default>'#ffffff'</default>
+      <summary>Colour of the idle line (network speed or greeting)</summary>
+    </key>
+    <key name="color-good" type="s">
+      <default>'#2ecc71'</default>
+      <summary>Colour for good news (connected, charging, ON)</summary>
+    </key>
+    <key name="color-bad" type="s">
+      <default>'#ff4d4d'</default>
+      <summary>Colour for bad news (disconnected, OFF, discharging, low)</summary>
+    </key>
+    <key name="color-warn" type="s">
+      <default>'#ffb020'</default>
+      <summary>Colour for warnings (reminders, Caps Lock, high CPU)</summary>
+    </key>
+    <key name="color-info" type="s">
+      <default>'#ffffff'</default>
+      <summary>Colour for neutral messages and the hourly line</summary>
+    </key>
+    <key name="color-thought" type="s">
+      <default>'#ffffff'</default>
+      <summary>Colour of good thoughts</summary>
+    </key>
+    <key name="speed-colors" type="b">
+      <default>true</default>
+      <summary>Colour the network speed by how fast the link is</summary>
+    </key>
+    <key name="speed-fast-kbps" type="i">
+      <default>1024</default>
+      <range min="64" max="1000000"/>
+      <summary>Above this speed (KB/s) the speed shows in the good colour</summary>
+    </key>
+    <key name="speed-slow-kbps" type="i">
+      <default>20</default>
+      <range min="0" max="100000"/>
+      <summary>Below this speed (KB/s) the speed shows in the warning colour</summary>
+    </key>
+    <key name="data-usage" type="s">
+      <default>''</default>
+      <summary>Bytes used today (kept by the extension, do not edit)</summary>
+    </key>
+    <key name="data-usage-hours" type="i">
+      <default>3</default>
+      <range min="1" max="24"/>
+      <summary>Hours between "data used today" messages</summary>
+    </key>
+    <key name="weather-rain-percent" type="i">
+      <default>60</default>
+      <range min="10" max="100"/>
+      <summary>Warn when the rain chance in the next 2 hours is at least this (%)</summary>
+    </key>
+    <key name="weather-hot" type="i">
+      <default>38</default>
+      <range min="20" max="60"/>
+      <summary>Warn when it gets this hot (Celsius)</summary>
+    </key>
+    <key name="weather-cold" type="i">
+      <default>5</default>
+      <range min="-40" max="20"/>
+      <summary>Warn when it gets this cold (Celsius)</summary>
+    </key>
+    <key name="show-datausage" type="b">
+      <default>true</default>
+      <summary>Show data used today messages</summary>
+    </key>
+    <key name="priority-datausage" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of data used today messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="show-weatheralert" type="b">
+      <default>true</default>
+      <summary>Show weather alerts messages</summary>
+    </key>
+    <key name="priority-weatheralert" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of weather alerts messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-internet" type="b">
+      <default>true</default>
+      <summary>Show the icon for internet messages</summary>
+    </key>
+    <key name="icon-batterywarn" type="b">
+      <default>true</default>
+      <summary>Show the icon for batterywarn messages</summary>
+    </key>
+    <key name="icon-calendar" type="b">
+      <default>true</default>
+      <summary>Show the icon for calendar messages</summary>
+    </key>
+    <key name="icon-syswarn" type="b">
+      <default>true</default>
+      <summary>Show the icon for syswarn messages</summary>
+    </key>
+    <key name="icon-camera" type="b">
+      <default>true</default>
+      <summary>Show the icon for camera messages</summary>
+    </key>
+    <key name="icon-usb" type="b">
+      <default>true</default>
+      <summary>Show the icon for usb messages</summary>
+    </key>
+    <key name="icon-bluetooth" type="b">
+      <default>true</default>
+      <summary>Show the icon for bluetooth messages</summary>
+    </key>
+    <key name="icon-wifi" type="b">
+      <default>true</default>
+      <summary>Show the icon for wifi messages</summary>
+    </key>
+    <key name="icon-modes" type="b">
+      <default>true</default>
+      <summary>Show the icon for modes messages</summary>
+    </key>
+    <key name="icon-battery" type="b">
+      <default>true</default>
+      <summary>Show the icon for battery messages</summary>
+    </key>
+    <key name="icon-volume" type="b">
+      <default>true</default>
+      <summary>Show the icon for volume messages</summary>
+    </key>
+    <key name="icon-mic" type="b">
+      <default>true</default>
+      <summary>Show the icon for mic messages</summary>
+    </key>
+    <key name="icon-keys" type="b">
+      <default>true</default>
+      <summary>Show the icon for keys messages</summary>
+    </key>
+    <key name="icon-media" type="b">
+      <default>true</default>
+      <summary>Show the icon for media messages</summary>
+    </key>
+    <key name="icon-updates" type="b">
+      <default>true</default>
+      <summary>Show the icon for updates messages</summary>
+    </key>
+    <key name="icon-weather" type="b">
+      <default>true</default>
+      <summary>Show the icon for weather messages</summary>
+    </key>
+    <key name="icon-hourly" type="b">
+      <default>true</default>
+      <summary>Show the icon for hourly messages</summary>
+    </key>
+    <key name="icon-thought" type="b">
+      <default>true</default>
+      <summary>Show the icon for thought messages</summary>
+    </key>
+    <key name="icon-datausage" type="b">
+      <default>true</default>
+      <summary>Show the icon for datausage messages</summary>
+    </key>
+    <key name="icon-weatheralert" type="b">
+      <default>true</default>
+      <summary>Show the icon for weatheralert messages</summary>
+    </key>
+    <key name="left-click" type="s">
+      <default>'menu'</default>
+      <summary>Left click: menu (details dropdown) or settings</summary>
+    </key>
+    <key name="pomodoro-focus-min" type="i">
+      <default>25</default>
+      <range min="1" max="120"/>
+      <summary>Focus time (minutes)</summary>
+    </key>
+    <key name="pomodoro-short-min" type="i">
+      <default>5</default>
+      <range min="1" max="60"/>
+      <summary>Short break (minutes)</summary>
+    </key>
+    <key name="pomodoro-long-min" type="i">
+      <default>15</default>
+      <range min="1" max="120"/>
+      <summary>Long break (minutes, every 4th break)</summary>
+    </key>
+    <key name="pomodoro-sound" type="b">
+      <default>true</default>
+      <summary>Play a sound when a focus or break phase ends</summary>
+    </key>
+    <key name="pomodoro-toggle" type="as">
+      <default>['&lt;Super&gt;&lt;Alt&gt;p']</default>
+      <summary>Keyboard shortcut: start / pause the focus timer</summary>
+    </key>
+    <key name="color-focus" type="s">
+      <default>'#4da3ff'</default>
+      <summary>Colour of the focus timer</summary>
+    </key>
+    <key name="ping-seconds" type="i">
+      <default>10</default>
+      <range min="5" max="300"/>
+      <summary>Seconds between latency checks</summary>
+    </key>
+    <key name="ping-warn-ms" type="i">
+      <default>300</default>
+      <range min="50" max="5000"/>
+      <summary>Warn when latency stays above this (ms)</summary>
+    </key>
+    <key name="idle-show-ping" type="b">
+      <default>false</default>
+      <summary>Show the latency after the speed numbers</summary>
+    </key>
+    <key name="public-ip-at-start" type="b">
+      <default>false</default>
+      <summary>Look up the public IP (ipwho.is) at login</summary>
+    </key>
+    <key name="show-pomodoro" type="b">
+      <default>true</default>
+      <summary>Show focus timer messages</summary>
+    </key>
+    <key name="priority-pomodoro" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of focus timer messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-pomodoro" type="b">
+      <default>true</default>
+      <summary>Show the icon for pomodoro messages</summary>
+    </key>
+    <key name="show-latency" type="b">
+      <default>true</default>
+      <summary>Show high latency messages</summary>
+    </key>
+    <key name="priority-latency" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of high latency messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-latency" type="b">
+      <default>true</default>
+      <summary>Show the icon for latency messages</summary>
+    </key>
+    <key name="show-vpnlocation" type="b">
+      <default>true</default>
+      <summary>Show vpn location messages</summary>
+    </key>
+    <key name="priority-vpnlocation" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of vpn location messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-vpnlocation" type="b">
+      <default>true</default>
+      <summary>Show the icon for vpnlocation messages</summary>
+    </key>
+    <key name="reminders" type="s">
+      <default>'[]'</default>
+      <summary>Your reminders (JSON list: label, time, days, repeat, enabled)</summary>
+    </key>
+    <key name="notification-apps" type="as">
+      <default>[]</default>
+      <summary>Only show notifications from these apps (empty = all apps)</summary>
+    </key>
+    <key name="show-clipboard" type="b">
+      <default>false</default>
+      <summary>Show copied notices messages</summary>
+    </key>
+    <key name="priority-clipboard" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of copied notices messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-clipboard" type="b">
+      <default>true</default>
+      <summary>Show the icon for clipboard messages</summary>
+    </key>
+    <key name="show-screenshot" type="b">
+      <default>true</default>
+      <summary>Show screenshot notices messages</summary>
+    </key>
+    <key name="priority-screenshot" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of screenshot notices messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-screenshot" type="b">
+      <default>true</default>
+      <summary>Show the icon for screenshot messages</summary>
+    </key>
+    <key name="show-download" type="b">
+      <default>true</default>
+      <summary>Show download finished messages</summary>
+    </key>
+    <key name="priority-download" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of download finished messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-download" type="b">
+      <default>true</default>
+      <summary>Show the icon for download messages</summary>
+    </key>
+    <key name="show-reminder" type="b">
+      <default>true</default>
+      <summary>Show reminders messages</summary>
+    </key>
+    <key name="priority-reminder" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of reminders messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-reminder" type="b">
+      <default>true</default>
+      <summary>Show the icon for reminder messages</summary>
+    </key>
+    <key name="show-notifications" type="b">
+      <default>false</default>
+      <summary>Show notification mirror messages</summary>
+    </key>
+    <key name="priority-notifications" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of notification mirror messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-notifications" type="b">
+      <default>true</default>
+      <summary>Show the icon for notifications messages</summary>
+    </key>
+  </schema>
+</schemalist>

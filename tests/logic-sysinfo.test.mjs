@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import * as s from '../sysinfo.js';
+const a=s.parseCpu('cpu 100 0 100 700 100 0 0 0\n'), b=s.parseCpu('cpu 200 0 200 800 100 0 0 0\n');
+assert.equal(s.cpuPct(a,b),67); assert.equal(s.cpuPct(null,b),null); assert.equal(s.cpuPct(b,a),null);
+assert.equal(s.ramPct('MemTotal: 1000 kB\nMemAvailable: 250 kB\n'),75); assert.equal(s.ramPct(''),null);
+assert.equal(s.batteryTime('Discharging',{energyNow:30e6,powerNow:10e6}),10800);
+assert.equal(s.batteryTime('Charging',{energyNow:30e6,energyFull:40e6,powerNow:10e6}),3600);
+assert.equal(s.batteryTime('Discharging',{tte:1200}),1200); assert.equal(s.batteryTime('Full',{}),null);
+assert.equal(s.fmtHM(7500),'2h 05m'); assert.equal(s.fmtHM(600),'10m');
+assert.deepEqual(s.parseWifi('no:Other:40\nyes:Home\\:5G:72\n'),{ssid:'Home:5G',signal:72}); assert.equal(s.parseWifi('no:x:1'),null);
+assert.equal(s.parseLocalIp('2: wlp3 inet 192.168.1.5/24 brd x'),'192.168.1.5');
+console.log('sysinfo tests pass');
