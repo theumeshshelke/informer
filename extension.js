@@ -1,7 +1,13 @@
 // Informer - GNOME Shell extension (GNOME 45+ ESM style)
 // Top bar shows "Good Morning, Umesh". Changes (Bluetooth, Wi-Fi, charging,
-// volume ...) slide in as a green/red message, a good thought slides in every
-// few minutes, then the greeting returns. Click the item to open settings.
+// volume, USB, internet ...) slide in as a coloured message, a good thought
+// slides in every few minutes, then the greeting returns.
+//
+// Left click = settings. Middle click = show the next good thought now.
+//
+// Messages have priorities (Low / Normal / High / Critical, set per kind of
+// message in the settings). A higher priority interrupts the one on screen,
+// the rest wait in a queue, best first. Critical ignores quiet hours.
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -12,152 +18,41 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
+import {CATEGORIES, HIGH, HOURLY, LOW, NORMAL, CRITICAL, THOUGHTS} from './data.js';
+import {MessageQueue} from './queue.js';
+import {listDir, readFile, run} from './util.js';
+import {
+    CalendarSource, CameraSource, InternetSource, KeyboardSource,
+    MediaSource, SystemSource, UsbSource,
+} from './sources.js';
+
 // ---------------- look & feel (code-level settings) ----------------
 const SLIDE_PX = 60;        // how far the text slides
 const SLIDE_MS = 250;       // slide speed (smaller = faster)
 const WHITE = '#ffffff';    // fallback only - colours are set in the Informer settings
-const LOW_BATTERY = [20, 10, 5];
+const UNPLUG_REPEAT_MS = 10 * 60 * 1000;   // repeat "unplug the charger" this often
+const LOW_REPEAT_MS = 3 * 60 * 1000;       // repeat very-low-battery warnings this often
 // --------------------------------------------------------------------
 
-const HOURLY = {
-    0: 'Midnight coder mode: bugs fear you now.',
-    1: 'The quiet hours. Great ideas show up uninvited.',
-    2: 'Even the CPU wants you to sleep. Almost.',
-    3: '3 AM: where legends and typos are born.',
-    4: 'Early bird gets the best commits.',
-    5: 'The sun is warming up. So should you.',
-    6: 'Fresh day, clean git status.',
-    7: 'Coffee loaded. Ready to compile the day.',
-    8: "Let's ship something awesome today.",
-    9: 'Focus time: one task, full power.',
-    10: 'Small steps, big builds. Keep going.',
-    11: 'Almost noon - push that commit.',
-    12: 'Midday checkpoint: water, stretch, smile.',
-    13: 'Lunch buffer loading... 100% needed.',
-    14: "Post-lunch boss fight. You've got this.",
-    15: "Afternoon grind: you're closer than you think.",
-    16: 'Golden hour for debugging.',
-    17: 'Wrap up, review, and be proud of today.',
-    18: 'Evening vibes. Time to learn something new.',
-    19: "Side-project o'clock. Build your dream.",
-    20: 'Wind down, or level up - your call.',
-    21: 'Night shift of the curious. Respect.',
-    22: 'Save your work. Rest is a feature.',
-    23: 'Last hour of today. Make it count.',
-};
+const CAT = new Map(CATEGORIES.map(c => [c.key, c]));
 
-// Good thoughts - edit or add your own. One is shown every few minutes.
-const THOUGHTS = [
-    'Small progress is still progress.',
-    'Do it badly, then do it better.',
-    'Your future self is watching. Impress them.',
-    'Consistency beats intensity.',
-    'One bug fixed is one lesson earned.',
-    'Be kind to yourself while you learn.',
-    'Start before you feel ready.',
-    'Slow is smooth, smooth is fast.',
-    'Every expert was once a beginner.',
-    'Focus on the next step, not the whole staircase.',
-    'Rest is part of the work.',
-    'You are closer than yesterday.',
-    'Done is better than perfect.',
-    'Curiosity is a superpower. Keep asking why.',
-    'Good habits are quiet compounding.',
-    "Don't compare your chapter 1 to their chapter 20.",
-    'Make today a little better than yesterday.',
-    'Breathe. Then continue.',
-    'A calm mind writes cleaner code.',
-    'Learn one thing deeply, then build with it.',
-    'Hard roads lead to strong people.',
-    'Say yes to growth, no to excuses.',
-    "Your effort today is tomorrow's skill.",
-    'Mistakes are just free tuition.',
-    'Be the person who keeps showing up.',
-    'Drink some water. Sit up straight.',
-    'Gratitude turns enough into plenty.',
-    "Build something you'd be proud to show.",
-    'Patience is also progress.',
-    'Dream big, ship small, repeat.',
-    'Let your work speak louder than doubt.',
-    'Smile. It makes the code compile faster.',
-    'Courage is taking the next step anyway.',
-    'Help someone today. It costs nothing.',
-    'Stay humble, keep learning.',
-    'Energy flows where focus goes.',
-    'Today is a fresh page. Write well.',
-    "Don't wait for motivation. Build momentum.",
-    'Belief fuels the first mile.',
-    'Small wins deserve a smile.',
-    'Clear goals, calm steps, steady heart.',
-    "Be proud of how far you've come.",
-    'Quality grows from care, not hurry.',
-    'Failure is feedback in disguise.',
-    'Protect your focus like it is gold.',
-    'Kind words cost nothing and mean everything.',
-    'Take a short break. Your mind will thank you.',
-    'The best time to start was yesterday. The next best is now.',
-    'Skills are built in the boring middle.',
-    'Choose progress over perfection.',
-    'Your pace is your own. Keep walking.',
-    'Teach what you learn, and you learn it twice.',
-    'Be curious, be brave, be consistent.',
-    'Good things take time and good habits.',
-    'Every line of code is practice.',
-    'Stay positive; the best builds are ahead.',
-    'Listen more, assume less.',
-    'Keep your promises, even to yourself.',
-    'Peace of mind is productive.',
-    "You've got this.",
-];
-
-// stride coprime with the list length so thoughts look shuffled but never repeat early
 function gcd(a, b) {
     return b === 0 ? a : gcd(b, a % b);
 }
-const STRIDE = (() => {
-    let s = 7;
-    while (gcd(s, THOUGHTS.length) !== 1)
-        s++;
-    return s;
-})();
+
+// pick item i so that the order looks shuffled but nothing repeats early
+function pick(list, i) {
+    let stride = 7;
+    while (gcd(stride, list.length) !== 1)
+        stride++;
+    return list[(i * stride) % list.length];
+}
 
 function greetingWord(h) {
     if (h >= 5 && h < 12) return 'Good Morning';
     if (h >= 12 && h < 17) return 'Good Afternoon';
     if (h >= 17 && h < 21) return 'Good Evening';
     return 'Good Night';
-}
-
-// Run a command without blocking the shell. Always resolves to a string.
-function run(argv) {
-    return new Promise(resolve => {
-        try {
-            const proc = new Gio.Subprocess({
-                argv,
-                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
-            });
-            proc.init(null);
-            proc.communicate_utf8_async(null, null, (p, res) => {
-                try {
-                    const [, out] = p.communicate_utf8_finish(res);
-                    resolve(out ?? '');
-                } catch (e) {
-                    resolve('');
-                }
-            });
-        } catch (e) {
-            resolve('');
-        }
-    });
-}
-
-function readFile(path) {
-    try {
-        const [ok, bytes] = GLib.file_get_contents(path);
-        return ok ? new TextDecoder().decode(bytes).trim() : '';
-    } catch (e) {
-        return '';
-    }
 }
 
 function readBattery() {
@@ -167,6 +62,22 @@ function readBattery() {
             return {pct: parseInt(cap), status: readFile(`/sys/class/power_supply/${b}/status`)};
     }
     return null;
+}
+
+// Airplane mode = every radio (Wi-Fi, Bluetooth, mobile) is blocked.
+// Returns null when the machine has no rfkill switches.
+function readAirplane() {
+    let total = 0;
+    let blocked = 0;
+    for (const d of listDir('/sys/class/rfkill')) {
+        const base = `/sys/class/rfkill/${d}`;
+        if (!['wlan', 'bluetooth', 'wwan'].includes(readFile(`${base}/type`)))
+            continue;
+        total++;
+        if (readFile(`${base}/soft`) === '1' || readFile(`${base}/hard`) === '1')
+            blocked++;
+    }
+    return total > 0 ? blocked === total : null;
 }
 
 const InformerIndicator = GObject.registerClass(
@@ -182,26 +93,36 @@ class InformerIndicator extends PanelMenu.Button {
         });
         this.add_child(this._greet);
 
-        // click = open the extension settings
-        this.connect('button-press-event', () => {
-            this._ext.openPreferences();
+        // left click = settings, middle click = next good thought right now
+        this.connect('button-press-event', (_actor, event) => {
+            if (event.get_button() === Clutter.BUTTON_MIDDLE)
+                this._showThought(true);
+            else
+                this._ext.openPreferences();
             return Clutter.EVENT_STOP;
         });
 
+        this._q = new MessageQueue();
+        this._armedFor = null;
+        this._expiry = 0;
+        this._thoughtN = Math.floor(Math.random() * 1000);
         this._prevSlow = null;
         this._prevVol = null;
+        this._prevMic = null;
         this._prevBat = null;
         this._lastHour = null;
         this._lastSlot = null;
-        this._flashText = '';
-        this._flashKind = 'info';
-        this._flashUntil = 0;
         this._curText = null;
         this._curColor = null;
-        this._busy = {slow: false, vol: false};
-        this._pending = {slow: false, vol: false};
+        this._busy = {};
+        this._pending = {};
         this._deb = {};
         this._subs = [];
+        this._apCache = new Map();        // connection uuid -> is it a hotspot?
+        this._radioQuietUntil = 0;        // hide Wi-Fi/Bluetooth noise right after airplane mode
+        this._unplugAt = 0;
+        this._lowLevel = 0;
+        this._lowAt = 0;
         this._pactlOk = false;
         this._destroyed = false;
         this._tick = 0;
@@ -214,8 +135,21 @@ class InformerIndicator extends PanelMenu.Button {
         this._render();
         this._pollSlow();
         this._pollVol();
+        this._pollMic();
         this._subscribeDBus();
         this._startPactl();
+
+        // extra event sources (now playing, USB, internet, calendar ...)
+        const ctx = {settings: this._s, post: o => this._flash(o.text, o.kind, o.cat, o)};
+        this._sources = [];
+        for (const S of [MediaSource, UsbSource, KeyboardSource, CameraSource,
+            InternetSource, SystemSource, CalendarSource]) {
+            try {
+                this._sources.push(new S(ctx));
+            } catch (e) {
+                console.error(`informer: ${S.name} could not start: ${e}`);
+            }
+        }
 
         // light 1-second heartbeat: battery file read, render, safety-net polls
         this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
@@ -224,8 +158,10 @@ class InformerIndicator extends PanelMenu.Button {
             this._tick = (this._tick + 1) % 3;
             if (this._tick === 0)
                 this._pollSlow();            // safety net if an event was missed
-            if (!this._pactlOk)
+            if (!this._pactlOk) {
                 this._pollVol();             // fallback when pactl subscribe is unavailable
+                this._pollMic();
+            }
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -234,21 +170,87 @@ class InformerIndicator extends PanelMenu.Button {
     _int(k) { return this._s.get_int(k); }
     _bool(k) { return this._s.get_boolean(k); }
 
-    // colour for a kind: 'greeting' | 'good' | 'bad' | 'info' | 'thought'
+    // colour for a kind: 'greeting' | 'good' | 'bad' | 'warn' | 'info' | 'thought'
     _colorFor(kind) {
         return this._str(`color-${kind}`) || WHITE;
     }
 
-    // ------------------------------------------------ display + animation
-    // kind: 'good' | 'bad' | 'info' | 'thought'
-    // cat: settings category ('bluetooth', 'wifi', 'battery', 'volume', 'hourly') or null
-    _flash(text, kind, cat = null, ms = null) {
-        if (cat && !this._bool(`show-${cat}`))
+    // ------------------------------------------------ priorities + queue
+    _prioOf(cat, boost = 0) {
+        const base = cat && CAT.has(cat) ? this._int(`priority-${cat}`) : NORMAL;
+        return Math.max(LOW, Math.min(CRITICAL, base + boost));
+    }
+
+    // Quiet hours and fullscreen: only Critical messages get through.
+    _quiet() {
+        if (this._bool('quiet-enabled')) {
+            const h = new Date().getHours();
+            const from = this._int('quiet-start');
+            const to = this._int('quiet-end');
+            if (from !== to && (from < to ? (h >= from && h < to) : (h >= from || h < to)))
+                return true;
+        }
+        if (this._bool('quiet-fullscreen')) {
+            try {
+                if (Main.layoutManager.primaryMonitor?.inFullscreen)
+                    return true;
+            } catch (e) { /* ignore */ }
+        }
+        return false;
+    }
+
+    // kind: 'good' | 'bad' | 'warn' | 'info' | 'thought'
+    // cat: category from data.js (decides the on/off switch and the priority) or null
+    // opts: {key, boost, prio, ms, force}
+    //   key   - a newer message with the same key replaces the older one
+    //   boost - raise/lower the category priority for this message only
+    //   force - ignore quiet hours (for things the person asked for)
+    _flash(text, kind, cat = null, opts = {}) {
+        if (this._destroyed)
             return;
-        this._flashText = text;
-        this._flashKind = kind;
-        this._flashUntil = Date.now() + (ms ?? this._int('flash-seconds') * 1000);
-        this._render();
+        if (cat && CAT.get(cat)?.toggle && !this._bool(`show-${cat}`))
+            return;
+        const prio = opts.prio ?? this._prioOf(cat, opts.boost ?? 0);
+        if (!opts.force && prio < CRITICAL && this._quiet())
+            return;
+        const base = this._int('flash-seconds') * 1000;
+        const ms = opts.ms ?? Math.round(base * (prio >= CRITICAL ? 1.5 : 1));
+        this._q.post({text, kind, prio, ms, key: opts.key ?? null}, Date.now());
+        this._sync();
+    }
+
+    // Let the queue decide what is on screen, then draw it.
+    _sync() {
+        const now = Date.now();
+        const cur = this._q.advance(now);
+        if (cur !== this._armedFor) {
+            this._armedFor = cur;
+            if (cur)
+                this._armExpiry(cur.until - now);
+        }
+        this._paint(cur);
+    }
+
+    // wake up exactly when the message on screen is due to leave
+    _armExpiry(ms) {
+        if (this._expiry)
+            GLib.source_remove(this._expiry);
+        this._expiry = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.max(50, ms + 30), () => {
+            this._expiry = 0;
+            if (!this._destroyed)
+                this._render();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    // ------------------------------------------------ display + animation
+    _paint(cur) {
+        if (cur) {
+            this._show(cur.text, this._colorFor(cur.kind));
+        } else {
+            const h = new Date().getHours();
+            this._show(`${greetingWord(h)}, ${this._str('name') || 'Umesh'}`, this._colorFor('greeting'));
+        }
     }
 
     _show(text, color) {
@@ -274,6 +276,28 @@ class InformerIndicator extends PanelMenu.Button {
         }
     }
 
+    // ------------------------------------------------ good thoughts
+    _nextThought() {
+        const mine = this._s.get_strv('thoughts').map(t => t.trim()).filter(Boolean);
+        const n = this._thoughtN++;
+        if (!mine.length)
+            return pick(THOUGHTS, n);
+        if (!this._bool('use-builtin-thoughts'))
+            return pick(mine, n);
+        // both lists: alternate, so your own thoughts show up regularly
+        return n % 2 === 0 ? pick(mine, n >> 1) : pick(THOUGHTS, n >> 1);
+    }
+
+    _showThought(byClick) {
+        // a click is something the person asked for: show it now, even in quiet hours
+        this._flash(this._nextThought(), 'thought', 'thought', {
+            ms: this._int('thought-seconds') * 1000,
+            key: 'thought',
+            force: byClick,
+            prio: byClick ? HIGH : undefined,
+        });
+    }
+
     _checkThought() {
         if (!this._bool('thoughts-enabled')) {
             this._lastSlot = null;
@@ -289,10 +313,7 @@ class InformerIndicator extends PanelMenu.Button {
         if (slot === this._lastSlot)
             return;
         this._lastSlot = slot;                       // set first (flash re-renders)
-        if (Date.now() < this._flashUntil)
-            return;                                  // don't cut off a status message
-        const idx = ((slot % THOUGHTS.length) * STRIDE) % THOUGHTS.length;
-        this._flash(THOUGHTS[idx], 'thought', null, this._int('thought-seconds') * 1000);
+        this._showThought(false);
     }
 
     _render() {
@@ -301,14 +322,10 @@ class InformerIndicator extends PanelMenu.Button {
             const first = this._lastHour === null;
             this._lastHour = h;                      // set first (flash re-renders)
             if (!first)
-                this._flash(HOURLY[h], 'info', 'hourly');
+                this._flash(HOURLY[h], 'info', 'hourly', {key: 'hourly'});
         }
         this._checkThought();
-
-        if (Date.now() < this._flashUntil)
-            this._show(this._flashText, this._colorFor(this._flashKind));
-        else
-            this._show(`${greetingWord(h)}, ${this._str('name') || 'Umesh'}`, this._colorFor('greeting'));
+        this._sync();
     }
 
     // ------------------------------------------------ event sources
@@ -321,6 +338,28 @@ class InformerIndicator extends PanelMenu.Button {
                 fn();
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    // Run fn one at a time per name; if asked again meanwhile, run once more after.
+    async _guarded(name, fn) {
+        if (this._destroyed)
+            return;
+        if (this._busy[name]) {
+            this._pending[name] = true;
+            return;
+        }
+        this._busy[name] = true;
+        try {
+            await fn();
+        } catch (e) {
+            console.error(`informer: ${e}`);
+        } finally {
+            this._busy[name] = false;
+            if (this._pending[name]) {
+                this._pending[name] = false;
+                this._guarded(name, fn);
+            }
+        }
     }
 
     _subscribeDBus() {
@@ -351,6 +390,7 @@ class InformerIndicator extends PanelMenu.Button {
         sub(NM, P, 'PropertiesChanged', NM, null);
         sub(NM, NM, 'PropertiesChanged', null, null);
         sub(NM, `${NM}.Device`, 'StateChanged', null, null);
+        sub(NM, `${NM}.Connection.Active`, 'StateChanged', null, null);
     }
 
     _startPactl() {
@@ -385,6 +425,8 @@ class InformerIndicator extends PanelMenu.Button {
                 }
                 if (/'change' on (sink|server)/.test(line))
                     this._debounce('vol', 60, () => this._pollVol());
+                if (/'change' on (source|server)/.test(line))
+                    this._debounce('mic', 80, () => this._pollMic());
                 this._readPactl();
             } catch (e) {
                 this._pactlOk = false;
@@ -392,131 +434,177 @@ class InformerIndicator extends PanelMenu.Button {
         });
     }
 
-    // ------------------------------------------------ Wi-Fi + Bluetooth
-    async _pollSlow() {
+    // ------------------------------------------------ Wi-Fi, Bluetooth, VPN, hotspot, airplane
+    _pollSlow() {
+        return this._guarded('slow', () => this._doSlow());
+    }
+
+    // is this active Wi-Fi connection a hotspot (access-point mode)? Cached per connection.
+    async _isHotspot(uuid) {
+        if (!this._apCache.has(uuid)) {
+            const mode = (await run(['nmcli', '-g', '802-11-wireless.mode',
+                'connection', 'show', 'uuid', uuid])).trim();
+            this._apCache.set(uuid, mode === 'ap');
+        }
+        return this._apCache.get(uuid);
+    }
+
+    async _doSlow() {
+        const [wifiRadio, wifiList, btShow, btDevs, conns] = await Promise.all([
+            run(['nmcli', 'radio', 'wifi']),
+            run(['nmcli', '-t', '-f', 'ACTIVE,SSID', 'dev', 'wifi']),
+            run(['bluetoothctl', 'show']),
+            run(['bluetoothctl', 'devices', 'Connected']),
+            run(['nmcli', '-t', '-f', 'UUID,TYPE,NAME', 'connection', 'show', '--active']),
+        ]);
         if (this._destroyed)
             return;
-        if (this._busy.slow) {
-            this._pending.slow = true;
-            return;
+
+        // active connections: VPNs and hotspot
+        const vpns = [];
+        let hotspot = false;
+        for (const line of conns.split('\n')) {
+            const m = line.match(/^([0-9a-f-]{36}):([^:]*):(.*)$/i);
+            if (!m)
+                continue;
+            const [, uuid, type, rawName] = m;
+            if (type === 'vpn' || type === 'wireguard')
+                vpns.push(rawName.replace(/\\:/g, ':'));
+            else if (type === '802-11-wireless' && await this._isHotspot(uuid))
+                hotspot = true;
         }
-        this._busy.slow = true;
-        try {
-            const [wifiRadio, wifiList, btShow, btDevs] = await Promise.all([
-                run(['nmcli', 'radio', 'wifi']),
-                run(['nmcli', '-t', '-f', 'ACTIVE,SSID', 'dev', 'wifi']),
-                run(['bluetoothctl', 'show']),
-                run(['bluetoothctl', 'devices', 'Connected']),
-            ]);
-            if (this._destroyed)
-                return;
+        if (this._destroyed)
+            return;
 
-            let wifi = {s: 'na', ssid: ''};
-            if (wifiRadio.trim()) {
-                if (wifiRadio.trim() !== 'enabled') {
-                    wifi = {s: 'off', ssid: ''};
-                } else {
-                    wifi = {s: 'disconnected', ssid: ''};
-                    for (const line of wifiList.split('\n')) {
-                        if (line.startsWith('yes:')) {
-                            wifi = {s: 'connected', ssid: line.slice(4).replace(/\\:/g, ':')};
-                            break;
-                        }
+        let wifi = {s: 'na', ssid: ''};
+        if (wifiRadio.trim()) {
+            if (wifiRadio.trim() !== 'enabled') {
+                wifi = {s: 'off', ssid: ''};
+            } else if (hotspot) {
+                wifi = {s: 'hotspot', ssid: ''};     // sharing, not connected to a router
+            } else {
+                wifi = {s: 'disconnected', ssid: ''};
+                for (const line of wifiList.split('\n')) {
+                    if (line.startsWith('yes:')) {
+                        wifi = {s: 'connected', ssid: line.slice(4).replace(/\\:/g, ':')};
+                        break;
                     }
                 }
             }
+        }
 
-            let bt = {s: 'na', devs: []};
-            if (btShow.trim()) {
-                if (!btShow.includes('Powered: yes')) {
-                    bt = {s: 'off', devs: []};
-                } else {
-                    const devs = [];
-                    for (const line of btDevs.split('\n')) {
-                        const m = line.trim().match(/^Device\s+[0-9A-F:]{17}\s+(.*)$/i);
-                        if (m)
-                            devs.push(m[1]);
-                    }
-                    bt = {s: 'on', devs};
+        let bt = {s: 'na', devs: []};
+        if (btShow.trim()) {
+            if (!btShow.includes('Powered: yes')) {
+                bt = {s: 'off', devs: []};
+            } else {
+                const devs = [];
+                for (const line of btDevs.split('\n')) {
+                    const m = line.trim().match(/^Device\s+[0-9A-F:]{17}\s+(.*)$/i);
+                    if (m)
+                        devs.push(m[1]);
                 }
+                bt = {s: 'on', devs};
             }
+        }
 
-            const prev = this._prevSlow;
-            this._prevSlow = {wifi, bt};
-            if (!prev)
-                return;
+        const air = readAirplane();
 
+        const prev = this._prevSlow;
+        this._prevSlow = {wifi, bt, vpns, hotspot, air};
+        if (!prev)
+            return;
+
+        // airplane mode switches Wi-Fi and Bluetooth off too: say it once, not three times
+        if (air !== null && prev.air !== null && air !== prev.air) {
+            this._radioQuietUntil = Date.now() + 5000;
+            this._flash(air ? 'Airplane mode is ON' : 'Airplane mode is OFF',
+                air ? 'warn' : 'good', 'modes', {key: 'airplane'});
+        }
+        const hush = Date.now() < this._radioQuietUntil;
+
+        if (!hush) {
             if (prev.bt.s !== bt.s) {
                 if (bt.s === 'on')
-                    this._flash('Bluetooth is ON', 'good', 'bluetooth');
+                    this._flash('Bluetooth is ON', 'good', 'bluetooth', {key: 'bluetooth'});
                 else if (bt.s === 'off')
-                    this._flash('Bluetooth is OFF', 'bad', 'bluetooth');
+                    this._flash('Bluetooth is OFF', 'bad', 'bluetooth', {key: 'bluetooth'});
             } else {
                 const added = bt.devs.filter(d => !prev.bt.devs.includes(d));
                 const gone = prev.bt.devs.filter(d => !bt.devs.includes(d));
                 if (added.length)
-                    this._flash(`Bluetooth is connected to ${added.join(', ')}`, 'good', 'bluetooth');
+                    this._flash(`Bluetooth is connected to ${added.join(', ')}`, 'good', 'bluetooth', {key: 'bluetooth'});
                 else if (gone.length)
-                    this._flash(`Bluetooth disconnected from ${gone.join(', ')}`, 'bad', 'bluetooth');
+                    this._flash(`Bluetooth disconnected from ${gone.join(', ')}`, 'bad', 'bluetooth', {key: 'bluetooth'});
             }
 
-            if (prev.wifi.s !== wifi.s || prev.wifi.ssid !== wifi.ssid) {
+            const wifiMoved = prev.wifi.s !== wifi.s || prev.wifi.ssid !== wifi.ssid;
+            // hotspot turned off: the hotspot message already says it
+            const afterHotspot = prev.wifi.s === 'hotspot' && wifi.s === 'disconnected';
+            if (wifiMoved && !afterHotspot) {
                 if (wifi.s === 'connected')
-                    this._flash(`Wi-Fi is connected to ${wifi.ssid}`, 'good', 'wifi');
+                    this._flash(`Wi-Fi is connected to ${wifi.ssid}`, 'good', 'wifi', {key: 'wifi'});
                 else if (wifi.s === 'disconnected')
-                    this._flash('Wi-Fi disconnected', 'bad', 'wifi');
+                    this._flash('Wi-Fi disconnected', 'bad', 'wifi', {key: 'wifi'});
                 else if (wifi.s === 'off')
-                    this._flash('Wi-Fi is OFF', 'bad', 'wifi');
+                    this._flash('Wi-Fi is OFF', 'bad', 'wifi', {key: 'wifi'});
             }
-        } catch (e) {
-            console.error(`informer: ${e}`);
-        } finally {
-            this._busy.slow = false;
-            if (this._pending.slow) {
-                this._pending.slow = false;
-                this._pollSlow();
-            }
+
+            if (prev.hotspot !== hotspot)
+                this._flash(hotspot ? 'Hotspot is ON' : 'Hotspot is OFF',
+                    hotspot ? 'good' : 'info', 'modes', {key: 'hotspot'});
+
+            const vpnOn = vpns.filter(v => !prev.vpns.includes(v));
+            const vpnOff = prev.vpns.filter(v => !vpns.includes(v));
+            if (vpnOn.length)
+                this._flash(`VPN connected: ${vpnOn.join(', ')}`, 'good', 'modes', {key: 'vpn'});
+            else if (vpnOff.length)
+                this._flash(`VPN disconnected: ${vpnOff.join(', ')}`, 'bad', 'modes', {key: 'vpn'});
         }
     }
 
-    // ------------------------------------------------ Volume
-    async _pollVol() {
+    // ------------------------------------------------ Volume + microphone
+    _pollVol() {
+        return this._guarded('vol', () => this._doVol());
+    }
+
+    async _doVol() {
+        const [vol, mute] = await Promise.all([
+            run(['pactl', 'get-sink-volume', '@DEFAULT_SINK@']),
+            run(['pactl', 'get-sink-mute', '@DEFAULT_SINK@']),
+        ]);
         if (this._destroyed)
             return;
-        if (this._busy.vol) {
-            this._pending.vol = true;
+
+        const vm = vol.match(/(\d+)%/);
+        const cur = {pct: vm ? parseInt(vm[1]) : null, muted: mute.includes('yes')};
+        const prev = this._prevVol;
+        this._prevVol = cur;
+        if (!prev || cur.pct === null || prev.pct === null)
             return;
-        }
-        this._busy.vol = true;
-        try {
-            const [vol, mute] = await Promise.all([
-                run(['pactl', 'get-sink-volume', '@DEFAULT_SINK@']),
-                run(['pactl', 'get-sink-mute', '@DEFAULT_SINK@']),
-            ]);
-            if (this._destroyed)
-                return;
 
-            const vm = vol.match(/(\d+)%/);
-            const cur = {pct: vm ? parseInt(vm[1]) : null, muted: mute.includes('yes')};
-            const prev = this._prevVol;
-            this._prevVol = cur;
-            if (!prev || cur.pct === null || prev.pct === null)
-                return;
+        if (cur.muted !== prev.muted)
+            this._flash(cur.muted ? 'Volume muted' : `Volume unmuted: ${cur.pct}%`,
+                cur.muted ? 'bad' : 'good', 'volume', {key: 'volume'});
+        else if (!cur.muted && cur.pct !== prev.pct)
+            this._flash(`Volume: ${cur.pct}%`, cur.pct > prev.pct ? 'good' : 'bad', 'volume', {key: 'volume'});
+    }
 
-            if (cur.muted !== prev.muted)
-                this._flash(cur.muted ? 'Volume muted' : `Volume unmuted: ${cur.pct}%`,
-                    cur.muted ? 'bad' : 'good', 'volume');
-            else if (!cur.muted && cur.pct !== prev.pct)
-                this._flash(`Volume: ${cur.pct}%`, cur.pct > prev.pct ? 'good' : 'bad', 'volume');
-        } catch (e) {
-            console.error(`informer: ${e}`);
-        } finally {
-            this._busy.vol = false;
-            if (this._pending.vol) {
-                this._pending.vol = false;
-                this._pollVol();
-            }
-        }
+    _pollMic() {
+        return this._guarded('mic', () => this._doMic());
+    }
+
+    async _doMic() {
+        const out = await run(['pactl', 'get-source-mute', '@DEFAULT_SOURCE@']);
+        if (this._destroyed || !out.trim())
+            return;
+        const muted = out.includes('yes');
+        const prev = this._prevMic;
+        this._prevMic = muted;
+        if (prev === null || prev === muted)
+            return;
+        this._flash(muted ? 'Microphone muted' : 'Microphone is live',
+            muted ? 'bad' : 'good', 'mic', {key: 'mic'});
     }
 
     // ------------------------------------------------ Battery
@@ -524,25 +612,52 @@ class InformerIndicator extends PanelMenu.Button {
         const bat = readBattery();
         const prev = this._prevBat;
         this._prevBat = bat;
-        if (!bat || !prev)
+        if (!bat)
             return;
+        const now = Date.now();
 
-        if (bat.status !== prev.status) {
+        // plugged in / unplugged / full
+        if (prev && bat.status !== prev.status) {
             if (bat.status === 'Charging')
-                this._flash(`Charging: ${bat.pct}%`, 'good', 'battery');
+                this._flash(`Charging: ${bat.pct}%`, 'good', 'battery', {key: 'battery'});
             else if (bat.status === 'Discharging')
-                this._flash(`Discharging: ${bat.pct}%`, 'bad', 'battery');
+                this._flash(`Discharging: ${bat.pct}%`, 'bad', 'battery', {key: 'battery'});
             else if (bat.status === 'Full')
-                this._flash('Battery full: 100%', 'good', 'battery');
+                this._flash('Battery full: 100%', 'good', 'battery', {key: 'battery'});
             else if (bat.status === 'Not charging')
-                this._flash(`Plugged in, not charging: ${bat.pct}%`, 'info', 'battery');
-        } else if (bat.status === 'Discharging') {
-            for (const t of LOW_BATTERY) {
-                if (prev.pct > t && bat.pct <= t) {
-                    this._flash(`Battery low: ${bat.pct}%`, 'bad', 'battery');
-                    break;
-                }
+                this._flash(`Plugged in, not charging: ${bat.pct}%`, 'info', 'battery', {key: 'battery'});
+        }
+
+        // "Unplug at 80%" reminder (protects the battery); repeats while still charging
+        const limit = this._int('charge-limit');
+        if (bat.status === 'Charging' && limit < 100 && bat.pct >= limit) {
+            if (now - this._unplugAt > UNPLUG_REPEAT_MS) {
+                this._unplugAt = now;
+                this._flash(`Battery ${bat.pct}%: unplug the charger`, 'warn', 'batterywarn', {key: 'unplug'});
             }
+        } else {
+            this._unplugAt = 0;
+        }
+
+        // low battery: 20% once, 10% and 5% are critical and repeat every few minutes
+        if (bat.status === 'Discharging') {
+            const level = bat.pct <= 5 ? 5 : bat.pct <= 10 ? 10 : bat.pct <= 20 ? 20 : 0;
+            const fresh = level !== this._lowLevel;
+            if (level && (fresh || (level <= 10 && now - this._lowAt > LOW_REPEAT_MS))) {
+                this._lowLevel = level;
+                this._lowAt = now;
+                if (level === 20)
+                    this._flash(`Battery low: ${bat.pct}%. Plug in the charger.`, 'warn', 'batterywarn', {key: 'batlow'});
+                else if (level === 10)
+                    this._flash(`Battery very low: ${bat.pct}%. Plug in now!`, 'bad', 'batterywarn', {key: 'batlow', boost: 1});
+                else
+                    this._flash(`Battery critical: ${bat.pct}%! Plug in right now.`, 'bad', 'batterywarn',
+                        {key: 'batlow', boost: 1, ms: 12000});
+            } else if (!level) {
+                this._lowLevel = 0;
+            }
+        } else {
+            this._lowLevel = 0;
         }
     }
 
@@ -552,10 +667,22 @@ class InformerIndicator extends PanelMenu.Button {
             GLib.source_remove(this._timer);
             this._timer = null;
         }
+        if (this._expiry) {
+            GLib.source_remove(this._expiry);
+            this._expiry = 0;
+        }
         for (const k of Object.keys(this._deb)) {
             if (this._deb[k])
                 GLib.source_remove(this._deb[k]);
         }
+        for (const s of this._sources ?? []) {
+            try {
+                s.destroy();
+            } catch (e) {
+                console.error(`informer: ${e}`);
+            }
+        }
+        this._sources = [];
         if (this._bus) {
             for (const id of this._subs)
                 this._bus.signal_unsubscribe(id);
@@ -570,6 +697,7 @@ class InformerIndicator extends PanelMenu.Button {
             this._s.disconnect(this._sid);
             this._sid = 0;
         }
+        this._q.clear();
         this._greet?.remove_all_transitions();
         super.destroy();
     }

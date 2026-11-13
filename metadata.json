@@ -1,12 +1,12 @@
 {
   "uuid": "informer@umesh",
   "name": "Informer",
-  "description": "Top-bar greeting that slides in live Wi-Fi, Bluetooth, battery and volume updates, plus a good thought every few minutes. Click it to open settings.",
+  "description": "Top-bar greeting that slides in live updates (Wi-Fi, internet, Bluetooth, battery, volume, USB, now playing, calendar, system warnings) with message priorities and quiet hours, plus your own good thoughts. Click for settings, middle-click for the next thought.",
   "shell-version": [
     "50",
     "51"
   ],
   "settings-schema": "org.gnome.shell.extensions.informer",
-  "version": 2,
+  "version": 3,
   "url": "https://github.com/theumeshshelke/informer"
 }

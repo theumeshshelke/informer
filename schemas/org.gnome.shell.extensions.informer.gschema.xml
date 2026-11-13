@@ -28,6 +28,38 @@
       <range min="3" max="30"/>
       <summary>How long a good thought stays in the bar</summary>
     </key>
+    <key name="thoughts" type="as">
+      <default>[]</default>
+      <summary>Your own good thoughts (one per entry)</summary>
+    </key>
+    <key name="use-builtin-thoughts" type="b">
+      <default>true</default>
+      <summary>Also use the built-in good thoughts</summary>
+    </key>
+    <key name="show-internet" type="b">
+      <default>true</default>
+      <summary>Show internet lost / back messages</summary>
+    </key>
+    <key name="show-batterywarn" type="b">
+      <default>true</default>
+      <summary>Show battery reminders messages</summary>
+    </key>
+    <key name="show-calendar" type="b">
+      <default>true</default>
+      <summary>Show calendar events messages</summary>
+    </key>
+    <key name="show-syswarn" type="b">
+      <default>true</default>
+      <summary>Show system warnings messages</summary>
+    </key>
+    <key name="show-camera" type="b">
+      <default>true</default>
+      <summary>Show camera in use messages</summary>
+    </key>
+    <key name="show-usb" type="b">
+      <default>true</default>
+      <summary>Show usb plugged / removed messages</summary>
+    </key>
     <key name="show-bluetooth" type="b">
       <default>true</default>
       <summary>Show Bluetooth messages</summary>
@@ -35,6 +67,10 @@
     <key name="show-wifi" type="b">
       <default>true</default>
       <summary>Show Wi-Fi messages</summary>
+    </key>
+    <key name="show-modes" type="b">
+      <default>true</default>
+      <summary>Show vpn, hotspot, airplane mode messages</summary>
     </key>
     <key name="show-battery" type="b">
       <default>true</default>
@@ -44,9 +80,158 @@
       <default>true</default>
       <summary>Show volume messages</summary>
     </key>
+    <key name="show-mic" type="b">
+      <default>true</default>
+      <summary>Show microphone messages</summary>
+    </key>
+    <key name="show-keys" type="b">
+      <default>true</default>
+      <summary>Show caps lock / num lock messages</summary>
+    </key>
+    <key name="show-media" type="b">
+      <default>true</default>
+      <summary>Show now playing messages</summary>
+    </key>
+    <key name="show-updates" type="b">
+      <default>true</default>
+      <summary>Show updates available messages</summary>
+    </key>
     <key name="show-hourly" type="b">
       <default>true</default>
       <summary>Show a new line when the hour changes</summary>
+    </key>
+    <key name="priority-internet" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of internet lost / back messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-batterywarn" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of battery reminders messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-calendar" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of calendar events messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-syswarn" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of system warnings messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-camera" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of camera in use messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-usb" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of usb plugged / removed messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-bluetooth" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of bluetooth messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-wifi" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of wi-fi messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-modes" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of vpn, hotspot, airplane mode messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-battery" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of charging / battery status messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-volume" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of volume messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-mic" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of microphone messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-keys" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of caps lock / num lock messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-media" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of now playing messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-updates" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of updates available messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-hourly" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of new line every hour messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="priority-thought" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of good thoughts messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="quiet-enabled" type="b">
+      <default>false</default>
+      <summary>Hide messages during quiet hours (Critical still shows)</summary>
+    </key>
+    <key name="quiet-start" type="i">
+      <default>22</default>
+      <range min="0" max="23"/>
+      <summary>Quiet hours start (hour, 0-23)</summary>
+    </key>
+    <key name="quiet-end" type="i">
+      <default>7</default>
+      <range min="0" max="23"/>
+      <summary>Quiet hours end (hour, 0-23)</summary>
+    </key>
+    <key name="quiet-fullscreen" type="b">
+      <default>true</default>
+      <summary>Hide messages while an app is fullscreen (Critical still shows)</summary>
+    </key>
+    <key name="charge-limit" type="i">
+      <default>80</default>
+      <range min="50" max="100"/>
+      <summary>Remind me to unplug at this charge percent (100 = off)</summary>
+    </key>
+    <key name="cpu-threshold" type="i">
+      <default>90</default>
+      <range min="50" max="100"/>
+      <summary>CPU use percent that counts as high</summary>
+    </key>
+    <key name="ram-threshold" type="i">
+      <default>90</default>
+      <range min="50" max="99"/>
+      <summary>RAM use percent that counts as high</summary>
+    </key>
+    <key name="temp-threshold" type="i">
+      <default>85</default>
+      <range min="50" max="110"/>
+      <summary>Temperature in Celsius that counts as high</summary>
+    </key>
+    <key name="disk-free-percent" type="i">
+      <default>10</default>
+      <range min="2" max="50"/>
+      <summary>Warn when free disk space falls below this percent</summary>
+    </key>
+    <key name="calendar-lead" type="i">
+      <default>10</default>
+      <range min="1" max="60"/>
+      <summary>Minutes before an event to warn</summary>
     </key>
     <key name="color-greeting" type="s">
       <default>'#ffffff'</default>
@@ -59,6 +244,10 @@
     <key name="color-bad" type="s">
       <default>'#ff4d4d'</default>
       <summary>Colour for bad news (disconnected, OFF, discharging, low)</summary>
+    </key>
+    <key name="color-warn" type="s">
+      <default>'#ffb020'</default>
+      <summary>Colour for warnings (reminders, Caps Lock, high CPU)</summary>
     </key>
     <key name="color-info" type="s">
       <default>'#ffffff'</default>
