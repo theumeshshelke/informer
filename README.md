@@ -108,6 +108,13 @@ Folder watching and clipboard listening only run while their switch is on.
 - Turn each kind on or off, or change its priority and icon, in Settings > Messages.
 - Icons added: `pendrive` (USB), `headphone`.
 
+## Icons for version 8 (still pictures, no animation)
+`monitor`, `ethernet`, `gamepad`, `printer`, `moon` (night light), `power` (power mode), `record`, `location`, `touchpad`, `brightness`, `speaker`, `hotspot`, `sleep`, `thermometer`, `reboot`, `network-switch`. All are one white shape, so they take the message colour.
+
+## New in version 8 (in progress)
+- **Night Light** "Night Light is ON / OFF" (Low), **Location** "Location is ON / OFF" (Low), **Touchpad** "Touchpad enabled / disabled" (Normal), **Power mode** "Power saver / Balanced / Performance" (Normal). Each has its own switch, priority and icon switch in Settings > Messages. They only speak when something changes, never at start. If your system lacks the setting or `power-profiles-daemon`, that message quietly does nothing. No new network hosts.
+- **Monitor** "Monitor connected / removed", **Ethernet** "Ethernet connected / unplugged" (checked with the Wi-Fi poll), **Controller** "Controller connected: NAME / removed" (needs `/dev/input/js*`), **Printer** "Printer connected / removed" (USB printers only), **Brightness** "Brightness 60%" (laptop screens; a slider drag shows one message). Same rules: own switch, priority and icon switch each, silent at start, no new network hosts.
+
 ## Network access
 - `air-quality-api.open-meteo.com`: air quality (only while the Air quality message kind is on).
 - `api.open-meteo.com`, `geocoding-api.open-meteo.com`: weather (can be turned off).

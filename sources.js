@@ -14,12 +14,14 @@ import {run, readFile, listDir, clip, fmtBytes, fmtDuration} from './util.js';
 import {rainSoon, weatherAlerts} from './weatherlogic.js';
 import {sunEvents, sunDue} from './sunlogic.js';
 import {airAlert} from './airlogic.js';
-import {USB_DEVICE_RE, diffUsb, trackUsb, usbName} from './usblogic.js';
+import {USB_DEVICE_RE, diffUsb, isPrinter, trackUsb, usbName} from './usblogic.js';
 import {cpuPct, parseCpu, ramPct} from './sysinfo.js';
 import {PingHistory} from './pinglogic.js';
 import {appAllowed, isScreenshotName, isTempName, StableWatcher} from './filters.js';
 import {dueReminders, parseReminders, pruneFired, serializeReminders} from './reminders.js';
 import {isStale, maskIp, parseIpwho, placeText} from './publicip.js';
+import {onOffMessage, profileMessage, touchpadMessage} from './switchlogic.js';
+import {JS_RE, gamepadMessage, monitorChange} from './hwlogic.js';
 
 function getBus(type) {
     try {
@@ -314,7 +316,9 @@ export class UsbDevSource extends Source {
         this._info = new Map();      // device id -> {track, name} (read once per device)
         this._seen = null;           // Map id -> name, or null before the first look
         this._timer = 0;
+        this._kinds = new Map();     // device id -> 'printer' | 'device' (of what we saw last)
         this._id = this.settings.connect('changed::show-usbdev', () => this._sync());
+        this._id2 = this.settings.connect('changed::show-printer', () => this._sync());
         this._sync();
     }
 
@@ -323,7 +327,8 @@ export class UsbDevSource extends Source {
         this._timer = 0;
         this._seen = null;           // no messages for what is already plugged in
         this._info.clear();
-        if (this.dead || !this.on('show-usbdev'))
+        this._kinds.clear();
+        if (this.dead || !(this.on('show-usbdev') || this.on('show-printer')))
             return;
         this._scan();
         this._timer = this.every(3, () => this._scan());
@@ -338,20 +343,24 @@ export class UsbDevSource extends Source {
             id, cls: readFile(`${base}/bDeviceClass`),
             removable: readFile(`${base}/removable`), ifaceClasses,
         });
-        return {track, name: usbName(readFile(`${base}/manufacturer`), readFile(`${base}/product`))};
+        return {track, kind: isPrinter(ifaceClasses) ? 'printer' : 'device',
+            name: usbName(readFile(`${base}/manufacturer`), readFile(`${base}/product`))};
     }
 
     _scan() {
         const ids = listDir(USB_SYS).filter(n => USB_DEVICE_RE.test(n));
         const cur = new Map();
+        const curKinds = new Map();
         for (const id of ids) {
             let info = this._info.get(id);
             if (!info) {
                 info = this._probe(id);
                 this._info.set(id, info);
             }
-            if (info.track)
+            if (info.track) {
                 cur.set(id, info.name);
+                curKinds.set(id, info.kind);
+            }
         }
         for (const id of [...this._info.keys()]) {
             if (!ids.includes(id))
@@ -359,18 +368,30 @@ export class UsbDevSource extends Source {
         }
         if (this._seen) {
             const {added, removed} = diffUsb(this._seen, cur);
-            for (const [id, name] of added)
-                this.post({text: `USB device: ${clip(name, 36)}`, kind: 'good', cat: 'usbdev', key: `usbdev:${id}`});
-            for (const [id, name] of removed)
-                this.post({text: `USB device removed: ${clip(name, 30)}`, kind: 'bad', cat: 'usbdev', key: `usbdev:${id}`});
+            for (const [id, name] of added) {
+                if (curKinds.get(id) === 'printer')
+                    this.post({text: 'Printer connected', kind: 'good', cat: 'printer', key: `usbdev:${id}`});
+                else
+                    this.post({text: `USB device: ${clip(name, 36)}`, kind: 'good', cat: 'usbdev', key: `usbdev:${id}`});
+            }
+            for (const [id, name] of removed) {
+                if (this._kinds.get(id) === 'printer')
+                    this.post({text: 'Printer removed', kind: 'bad', cat: 'printer', key: `usbdev:${id}`});
+                else
+                    this.post({text: `USB device removed: ${clip(name, 30)}`, kind: 'bad', cat: 'usbdev', key: `usbdev:${id}`});
+            }
         }
         this._seen = cur;
+        this._kinds = curKinds;
     }
 
     destroy() {
         if (this._id)
             this.settings.disconnect(this._id);
+        if (this._id2)
+            this.settings.disconnect(this._id2);
         this._id = 0;
+        this._id2 = 0;
         super.destroy();
     }
 }
@@ -1567,6 +1588,246 @@ export class LayoutSource extends Source {
         }
         this._ids = [];
         this._mgr = null;
+        super.destroy();
+    }
+}
+
+// ---------------------------------------------------------------- Switches (version 8)
+// Night Light, Location and Touchpad are GNOME settings. We watch them and say when one
+// changes (not at start). If a schema is missing on this system, that message quietly does nothing.
+const SWITCHES = [
+    {cat: 'nightlight', schema: 'org.gnome.settings-daemon.plugins.color', key: 'night-light-enabled', type: 'b'},
+    {cat: 'location', schema: 'org.gnome.system.location', key: 'enabled', type: 'b'},
+    {cat: 'touchpad', schema: 'org.gnome.desktop.peripherals.touchpad', key: 'send-events', type: 's'},
+];
+
+export class SwitchSource extends Source {
+    constructor(ctx) {
+        super(ctx);
+        this._w = [];       // {sw, gs, id, last}
+        for (const sw of SWITCHES) {
+            try {
+                this._watch(sw);
+            } catch (e) {
+                console.warn(`informer: ${sw.cat} messages are off: ${e}`);
+            }
+        }
+    }
+
+    _read(gs, sw) {
+        return sw.type === 'b' ? gs.get_boolean(sw.key) : gs.get_string(sw.key);
+    }
+
+    _watch(sw) {
+        const schema = Gio.SettingsSchemaSource.get_default()?.lookup(sw.schema, true);
+        if (!schema || !schema.has_key(sw.key))
+            return;
+        const gs = new Gio.Settings({schema_id: sw.schema});
+        const w = {sw, gs, id: 0, last: this._read(gs, sw)};
+        w.id = gs.connect(`changed::${sw.key}`, () => this._changed(w));
+        this._w.push(w);
+    }
+
+    _changed(w) {
+        if (this.dead)
+            return;
+        const now = this._read(w.gs, w.sw);
+        if (now === w.last)
+            return;
+        w.last = now;
+        const m = w.sw.type === 'b' ? onOffMessage(w.sw.cat, now) : touchpadMessage(now);
+        if (m)
+            this.post({text: m.text, kind: m.kind, cat: w.sw.cat, key: w.sw.cat});
+    }
+
+    destroy() {
+        for (const w of this._w) {
+            try {
+                w.gs.disconnect(w.id);
+            } catch (e) { /* ignore */ }
+        }
+        this._w = [];
+        super.destroy();
+    }
+}
+
+// ---------------------------------------------------------------- Power mode (version 8)
+// power-profiles-daemon (optional) sends PropertiesChanged when the mode changes.
+// It has two names on the system bus (the old and the new one): we listen on both and
+// skip a repeat of the same mode.
+const POWER_PROFILES = [
+    {name: 'org.freedesktop.UPower.PowerProfiles', path: '/org/freedesktop/UPower/PowerProfiles'},
+    {name: 'net.hadess.PowerProfiles', path: '/net/hadess/PowerProfiles'},
+];
+
+export class PowerModeSource extends Source {
+    constructor(ctx) {
+        super(ctx);
+        this._last = null;
+        for (const p of POWER_PROFILES) {
+            this.sub(this.system, null, 'org.freedesktop.DBus.Properties', 'PropertiesChanged',
+                p.path, p.name, (_who, params) => this._changed(params));
+        }
+        this._readFirst(0);
+    }
+
+    // the mode we start in (no message). Tries each name; if none answers, we just wait for a change.
+    _readFirst(i) {
+        if (!this.system || i >= POWER_PROFILES.length)
+            return;
+        const p = POWER_PROFILES[i];
+        try {
+            this.system.call(p.name, p.path, 'org.freedesktop.DBus.Properties', 'Get',
+                new GLib.Variant('(ss)', [p.name, 'ActiveProfile']), new GLib.VariantType('(v)'),
+                Gio.DBusCallFlags.NONE, 2000, null, (bus, res) => {
+                    if (this.dead)
+                        return;
+                    try {
+                        const v = `${bus.call_finish(res).recursiveUnpack()[0]}`;
+                        if (this._last === null)
+                            this._last = v;
+                    } catch (e) {
+                        this._readFirst(i + 1);
+                    }
+                });
+        } catch (e) {
+            this._readFirst(i + 1);
+        }
+    }
+
+    _changed(params) {
+        const changed = params.get_child_value(1).recursiveUnpack();
+        if (!('ActiveProfile' in changed))
+            return;
+        const now = `${changed.ActiveProfile}`;
+        if (now === this._last)
+            return;
+        this._last = now;
+        const m = profileMessage(now);
+        if (m)
+            this.post({text: m.text, kind: m.kind, cat: 'powermode', key: 'powermode'});
+    }
+}
+
+// ---------------------------------------------------------------- Monitor plugged / removed (version 8)
+// The Shell's layout manager tells us when the screens change. We wait a moment (it can fire
+// several times for one plug) and compare the count with the last count. Nothing at start.
+export class MonitorSource extends Source {
+    constructor(ctx) {
+        super(ctx);
+        this._lm = Main.layoutManager;
+        this._id = 0;
+        this._wait = 0;
+        this._n = this._count();
+        if (this._n === null) {
+            console.warn('informer: could not read the monitor list, monitor messages are off');
+            return;
+        }
+        this._id = this._lm.connect('monitors-changed', () => {
+            this.cancel(this._wait);
+            this._wait = this.after(600, () => this._check());
+        });
+    }
+
+    _count() {
+        const m = this._lm?.monitors;
+        return Array.isArray(m) ? m.length : null;
+    }
+
+    _check() {
+        const now = this._count();
+        const change = monitorChange(this._n, now);
+        if (now !== null)
+            this._n = now;
+        if (change)
+            this.post({text: change === 'added' ? 'Monitor connected' : 'Monitor removed',
+                kind: change === 'added' ? 'good' : 'bad', cat: 'monitor', key: 'monitor'});
+    }
+
+    destroy() {
+        if (this._id) {
+            try {
+                this._lm.disconnect(this._id);
+            } catch (e) { /* ignore */ }
+        }
+        this._id = 0;
+        super.destroy();
+    }
+}
+
+// ---------------------------------------------------------------- Game controller (version 8)
+// A controller shows up as /dev/input/jsN (needs the kernel "joydev" part, Ubuntu has it).
+// We watch the folder only while the switch is on. The name comes from /sys/class/input/jsN/device/name.
+const INPUT_DIR = '/dev/input';
+
+export class GamepadSource extends Source {
+    constructor(ctx) {
+        super(ctx);
+        this._mon = null;
+        this._monId = 0;
+        this._known = new Map();       // js name -> controller name
+        this._id = this.settings.connect('changed::show-gamepad', () => this._sync());
+        this._sync();
+    }
+
+    _nameOf(js) {
+        return clip(readFile(`/sys/class/input/${js}/device/name`), 24);
+    }
+
+    _sync() {
+        this._stop();
+        if (this.dead || !this.on('show-gamepad'))
+            return;
+        this._known = new Map(listDir(INPUT_DIR).filter(n => JS_RE.test(n)).map(n => [n, this._nameOf(n)]));
+        try {
+            this._mon = Gio.File.new_for_path(INPUT_DIR).monitor_directory(Gio.FileMonitorFlags.NONE, null);
+            this._monId = this._mon.connect('changed', (_m, file, _other, ev) => this._event(file, ev));
+        } catch (e) {
+            this._mon = null;          // no /dev/input to watch: nothing to do
+        }
+    }
+
+    _event(file, ev) {
+        if (this.dead)
+            return;
+        const js = file?.get_basename();
+        if (!js || !JS_RE.test(js))
+            return;
+        const E = Gio.FileMonitorEvent;
+        if (ev === E.CREATED && !this._known.has(js)) {
+            this._known.set(js, '');
+            // the name file shows up a moment after the device
+            this.after(400, () => {
+                if (!this._known.has(js))
+                    return;
+                const name = this._nameOf(js);
+                this._known.set(js, name);
+                this.post({text: gamepadMessage(true, name), kind: 'good', cat: 'gamepad', key: `gamepad:${js}`});
+            });
+        } else if (ev === E.DELETED && this._known.has(js)) {
+            const name = this._known.get(js);
+            this._known.delete(js);
+            this.post({text: gamepadMessage(false, name), kind: 'bad', cat: 'gamepad', key: `gamepad:${js}`});
+        }
+    }
+
+    _stop() {
+        if (this._mon) {
+            try {
+                if (this._monId)
+                    this._mon.disconnect(this._monId);
+                this._mon.cancel();
+            } catch (e) { /* ignore */ }
+        }
+        this._mon = null;
+        this._monId = 0;
+    }
+
+    destroy() {
+        if (this._id)
+            this.settings.disconnect(this._id);
+        this._id = 0;
+        this._stop();
         super.destroy();
     }
 }

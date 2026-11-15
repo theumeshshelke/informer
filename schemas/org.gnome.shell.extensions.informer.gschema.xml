@@ -732,5 +732,122 @@
       <default>''</default>
       <summary>Focus sessions finished today (kept by the extension, do not edit)</summary>
     </key>
+    <key name="show-nightlight" type="b">
+      <default>true</default>
+      <summary>Show Night Light messages</summary>
+    </key>
+    <key name="priority-nightlight" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of Night Light messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-nightlight" type="b">
+      <default>true</default>
+      <summary>Show the icon for Night Light messages</summary>
+    </key>
+    <key name="show-location" type="b">
+      <default>true</default>
+      <summary>Show Location messages</summary>
+    </key>
+    <key name="priority-location" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of Location messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-location" type="b">
+      <default>true</default>
+      <summary>Show the icon for Location messages</summary>
+    </key>
+    <key name="show-touchpad" type="b">
+      <default>true</default>
+      <summary>Show Touchpad messages</summary>
+    </key>
+    <key name="priority-touchpad" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of Touchpad messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-touchpad" type="b">
+      <default>true</default>
+      <summary>Show the icon for Touchpad messages</summary>
+    </key>
+    <key name="show-powermode" type="b">
+      <default>true</default>
+      <summary>Show power mode messages</summary>
+    </key>
+    <key name="priority-powermode" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of power mode messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-powermode" type="b">
+      <default>true</default>
+      <summary>Show the icon for power mode messages</summary>
+    </key>
+    <key name="show-monitor" type="b">
+      <default>true</default>
+      <summary>Show monitor messages</summary>
+    </key>
+    <key name="priority-monitor" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of monitor messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-monitor" type="b">
+      <default>true</default>
+      <summary>Show the icon for monitor messages</summary>
+    </key>
+    <key name="show-ethernet" type="b">
+      <default>true</default>
+      <summary>Show Ethernet messages</summary>
+    </key>
+    <key name="priority-ethernet" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of Ethernet messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-ethernet" type="b">
+      <default>true</default>
+      <summary>Show the icon for Ethernet messages</summary>
+    </key>
+    <key name="show-gamepad" type="b">
+      <default>true</default>
+      <summary>Show game controller messages</summary>
+    </key>
+    <key name="priority-gamepad" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of game controller messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-gamepad" type="b">
+      <default>true</default>
+      <summary>Show the icon for game controller messages</summary>
+    </key>
+    <key name="show-printer" type="b">
+      <default>true</default>
+      <summary>Show printer messages</summary>
+    </key>
+    <key name="priority-printer" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of printer messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-printer" type="b">
+      <default>true</default>
+      <summary>Show the icon for printer messages</summary>
+    </key>
+    <key name="show-brightness" type="b">
+      <default>true</default>
+      <summary>Show brightness messages</summary>
+    </key>
+    <key name="priority-brightness" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of brightness messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-brightness" type="b">
+      <default>true</default>
+      <summary>Show the icon for brightness messages</summary>
+    </key>
   </schema>
 </schemalist>

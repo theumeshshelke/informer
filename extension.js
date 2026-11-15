@@ -34,11 +34,12 @@ import {Pomodoro, eventText, fmtClock, focusText, labelFor} from './pomodoro.js'
 import {SimpleTimer, fmtTimer, timerDoneText, timerLabel} from './timerlogic.js';
 import {parseHeadphones} from './headphones.js';
 import {aqiName} from './airlogic.js';
+import {brightnessPct, ethernetUp, pickBacklight} from './hwlogic.js';
 import {clip, fmtBytes, listDir, readFile, run} from './util.js';
 import {
     CalendarSource, CameraSource, InternetSource, KeyboardSource,
-    ClipboardSource, FilesSource, LayoutSource, MediaSource, NotifySource, PingSource, PublicIpSource,
-    ReminderSource, SystemSource, UsbDevSource, UsbSource, WeatherSource,
+    ClipboardSource, FilesSource, GamepadSource, LayoutSource, MediaSource, MonitorSource, NotifySource, PingSource, PublicIpSource,
+    PowerModeSource, ReminderSource, SwitchSource, SystemSource, UsbDevSource, UsbSource, WeatherSource,
 } from './sources.js';
 
 // ---------------- look & feel (code-level settings) ----------------
@@ -175,6 +176,23 @@ function iconFor(m) {
     case 'airquality': return 'alert';
     case 'syswarn':
     case 'calendar': return 'alert';
+    // version 8
+    case 'monitor': return 'monitor';
+    case 'ethernet': return 'ethernet';
+    case 'gamepad': return 'gamepad';
+    case 'printer': return 'printer';
+    case 'nightlight': return 'moon';
+    case 'powermode': return 'power';
+    case 'recording': return 'record';
+    case 'location': return 'location';
+    case 'touchpad': return 'touchpad';
+    case 'brightness': return 'brightness';
+    case 'soundout': return /headphone/i.test(m.text) ? 'headphone' : 'speaker';
+    case 'hotspotclients': return 'hotspot';
+    case 'wake': return 'sleep';
+    case 'overheat': return 'thermometer';
+    case 'reboot': return 'reboot';
+    case 'wifiswitch': return 'network-switch';
     default: return m.kind === 'warn' ? 'alert' : null;
     }
 }
@@ -316,6 +334,10 @@ class InformerIndicator extends PanelMenu.Button {
         this._pactlOk = false;
         this._destroyed = false;
         this._tick = 0;
+        this._brDir = null;      // brightness: backlight folder, its max, last percent, wait when none
+        this._brMax = 0;
+        this._brLast = null;
+        this._brWait = 0;
 
         this._sid = this._s.connect('changed', () => {
             this._lastSlot = null;   // restart the thought timer on any change
@@ -341,7 +363,8 @@ class InformerIndicator extends PanelMenu.Button {
         this._pub = null;
         for (const S of [MediaSource, UsbSource, KeyboardSource, CameraSource,
             InternetSource, SystemSource, CalendarSource, WeatherSource, PingSource, PublicIpSource,
-            ClipboardSource, FilesSource, ReminderSource, NotifySource, LayoutSource, UsbDevSource]) {
+            ClipboardSource, FilesSource, ReminderSource, NotifySource, LayoutSource, UsbDevSource,
+            SwitchSource, PowerModeSource, MonitorSource, GamepadSource]) {
             try {
                 const src = new S(ctx);
                 this._sources.push(src);
@@ -373,6 +396,7 @@ class InformerIndicator extends PanelMenu.Button {
         // light 1-second heartbeat: battery + network speed file reads, render, safety-net polls
         this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             this._checkBattery();
+            this._checkBrightness();
             this._sampleNet();
             this._graphTick();
             this._render();
@@ -1367,9 +1391,10 @@ class InformerIndicator extends PanelMenu.Button {
         }
 
         const air = readAirplane();
+        const eth = ethernetUp(listDir('/sys/class/net').map(n => ({name: n, carrier: readFile(`/sys/class/net/${n}/carrier`)})));
 
         const prev = this._prevSlow;
-        this._prevSlow = {wifi, bt, vpns, hotspot, air};
+        this._prevSlow = {wifi, bt, vpns, hotspot, air, eth};
         if (!prev)
             return;
         if (prev.wifi.s !== wifi.s || prev.wifi.ssid !== wifi.ssid)
@@ -1381,6 +1406,9 @@ class InformerIndicator extends PanelMenu.Button {
             this._flash(air ? 'Airplane mode is ON' : 'Airplane mode is OFF',
                 air ? 'warn' : 'good', 'modes', {key: 'airplane'});
         }
+        if (prev.eth !== eth)
+            this._flash(eth ? 'Ethernet connected' : 'Ethernet unplugged', eth ? 'good' : 'bad', 'ethernet', {key: 'ethernet'});
+
         const hush = Date.now() < this._radioQuietUntil;
 
         if (!hush) {
@@ -1471,6 +1499,41 @@ class InformerIndicator extends PanelMenu.Button {
     }
 
     // ------------------------------------------------ Battery
+    // Screen brightness: read in the 1 s heartbeat, only while the message kind is on.
+    // The first reading is not announced. One key, so a slider drag replaces its own message.
+    _checkBrightness() {
+        if (!this._bool('show-brightness')) {
+            this._brLast = null;
+            return;
+        }
+        const base = '/sys/class/backlight';
+        if (!this._brDir) {
+            if (this._brWait > 0) {
+                this._brWait--;             // no backlight (desktop PC): look again later
+                return;
+            }
+            const name = pickBacklight(listDir(base).map(n => ({name: n, type: readFile(`${base}/${n}/type`)})));
+            if (!name) {
+                this._brWait = 30;
+                return;
+            }
+            this._brDir = `${base}/${name}`;
+            this._brMax = readFile(`${this._brDir}/max_brightness`);
+        }
+        const pct = brightnessPct(readFile(`${this._brDir}/brightness`), this._brMax);
+        if (pct === null) {
+            this._brDir = null;             // it went away: find it again later
+            this._brLast = null;
+            this._brWait = 30;
+            return;
+        }
+        const prev = this._brLast;
+        this._brLast = pct;
+        if (prev === null || prev === pct)
+            return;
+        this._flash(`Brightness ${pct}%`, 'info', 'brightness', {key: 'brightness'});
+    }
+
     _checkBattery() {
         const bat = readBattery();
         const prev = this._prevBat;

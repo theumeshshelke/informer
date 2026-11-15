@@ -38,3 +38,8 @@ export function diffUsb(prev, cur) {
     }
     return {added, removed};
 }
+
+// A USB printer has an interface of class 07. It gets its own message kind (`printer`).
+export function isPrinter(ifaceClasses) {
+    return (ifaceClasses ?? []).some(c => `${c}`.trim().toLowerCase() === '07');
+}
