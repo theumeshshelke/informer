@@ -1,5 +1,19 @@
 # Changelog
 
+## 7
+- Pen drive: after you unmount or eject a USB drive the bar says "Safe to remove: NAME" (category `usb`). The "USB removed" message is skipped right after it.
+- Other USB devices (OTG): phone, mouse, keyboard, adapter plugged / removed, read from `/sys/bus/usb/devices` every 3 seconds, only while `show-usbdev` is on. Hubs, built-in parts and pen drives are skipped. Module `usblogic.js`, category `usbdev` (Normal).
+- Headphones: "Headphones connected / unplugged" for wired headphones, read with `pactl --format=json list sinks` (optional tool). Bluetooth headphones stay in the Bluetooth row. Module `headphones.js`, category `headphones` (Normal).
+- Battery: "Charging: 45% (38 W)" a moment after plugging in (charging speed), and "Battery fully charged: 100%". The menu battery row shows the watts too. `chargeWatts()` in `sysinfo.js`.
+- Sunrise / sunset: "Sunset in 30 min" once per event. Setting `sun-lead-min`, category `sun` (Low). Same weather request (adds `sunrise,sunset`), checked every minute without the network. Module `sunlogic.js`.
+- Data used this week: the last 7 days, every `data-week-hours` hours (default 6). `data-usage` now also keeps the 6 earlier days (old saved data still loads). Category `dataweek` (Low).
+- Focus sessions: "3 focus sessions done today" after a focus ends by itself (skipping does not count). Setting `focus-today` (kept by the extension, never exported). Category `focusstats` (Normal).
+- Air quality: warning when the US AQI reaches `air-aqi-warn` (default 150), again if it gets worse by a band. Category `airquality` (High). New host: `air-quality-api.open-meteo.com` (only while that message kind is on). The menu shows the AQI.
+- Timer: countdown and stopwatch from the bar menu, shown in the bar like `Timer 04:10` / `Stopwatch 01:23` (the focus timer comes first if both run). Settings `timer-minutes`, `timer-sound`; category `timer` (High, also shown in quiet hours). Module `timerlogic.js`.
+- Dropdown made short: weather (2 lines, air quality only when bad), data today / 7 days, Wi-Fi, one system line, one battery line, and the timers. Speed, local and public IP, ping, humidity and wind rows were removed (the speed is in the bar already).
+- Icons: new `pendrive.svg` (USB) and `headphone.svg`.
+- `UsageTracker` and `DayCounter` in `usage.js`. Tests: `tests/logic-version7.test.mjs` (also checks that every category has its three schema keys).
+
 ## 6 - Phase A
 - Speed colours: settings `speed-colors`, `speed-fast-kbps`, `speed-slow-kbps`.
 - Data used today: settings `data-usage` (kept by the extension), `data-usage-hours`; category `datausage` (Low).

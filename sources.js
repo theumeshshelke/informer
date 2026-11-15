@@ -12,6 +12,9 @@ import * as Keyboard from 'resource:///org/gnome/shell/ui/status/keyboard.js';
 
 import {run, readFile, listDir, clip, fmtBytes, fmtDuration} from './util.js';
 import {rainSoon, weatherAlerts} from './weatherlogic.js';
+import {sunEvents, sunDue} from './sunlogic.js';
+import {airAlert} from './airlogic.js';
+import {USB_DEVICE_RE, diffUsb, trackUsb, usbName} from './usblogic.js';
 import {cpuPct, parseCpu, ramPct} from './sysinfo.js';
 import {PingHistory} from './pinglogic.js';
 import {appAllowed, isScreenshotName, isTempName, StableWatcher} from './filters.js';
@@ -73,11 +76,11 @@ class Source {
         if (!bus)
             return;
         const id = bus.signal_subscribe(sender, iface, member, path, arg0,
-            Gio.DBusSignalFlags.NONE, (_c, who, _p, _i, _sig, params) => {
+            Gio.DBusSignalFlags.NONE, (_c, who, objPath, _i, _sig, params) => {
                 if (this.dead)
                     return;
                 try {
-                    cb(who, params);
+                    cb(who, params, objPath);
                 } catch (e) {
                     console.error(`informer: ${this.constructor.name}: ${e}`);
                 }
@@ -188,8 +191,10 @@ const OM = 'org.freedesktop.DBus.ObjectManager';
 export class UsbSource extends Source {
     constructor(ctx) {
         super(ctx);
-        this._drives = new Map();      // drive object path -> {name, label}
+        this._drives = new Map();      // drive object path -> {name, label, safeAt}
         this._pending = new Map();     // drive path -> announce timer
+        this._blockDrive = new Map();  // block object path -> drive object path
+        this._mounted = new Set();     // block object paths that are mounted
         if (!this.system)
             return;
 
@@ -215,7 +220,38 @@ export class UsbSource extends Source {
                 const [path, ifaces] = params.recursiveUnpack();
                 if (ifaces.includes(`${UD}.Drive`))
                     this._gone(path);
+                if (ifaces.includes(`${UD}.Block`)) {
+                    this._blockDrive.delete(path);
+                    this._mounted.delete(path);
+                }
             });
+        // a drive was unmounted: it is now safe to pull out
+        this.sub(this.system, UD, 'org.freedesktop.DBus.Properties', 'PropertiesChanged', null,
+            `${UD}.Filesystem`, (_who, params, objPath) => {
+                const [, changed] = params.recursiveUnpack();
+                if (!changed || !('MountPoints' in changed))
+                    return;
+                if (changed.MountPoints?.length > 0)
+                    this._mounted.add(objPath);
+                else
+                    this._unmounted(objPath);
+            });
+    }
+
+    _unmounted(block) {
+        if (!this._mounted.delete(block))
+            return;
+        const dpath = this._blockDrive.get(block);
+        const d = dpath ? this._drives.get(dpath) : null;
+        if (!d)
+            return;                       // not a USB drive
+        for (const b of this._mounted) {
+            if (this._blockDrive.get(b) === dpath)
+                return;                   // another partition of it is still mounted
+        }
+        d.safeAt = Date.now();
+        this.post({text: `Safe to remove: ${clip(d.label || d.name, 40)}`,
+            kind: 'good', cat: 'usb', key: `usb-safe:${dpath}`});
     }
 
     _ingest(path, ifaces, announce) {
@@ -236,11 +272,16 @@ export class UsbSource extends Source {
             }
         }
         const block = ifaces[`${UD}.Block`];
+        if (block && block.Drive && block.Drive !== '/')
+            this._blockDrive.set(path, block.Drive);
         if (block && block.Drive && block.IdLabel) {
             const d = this._drives.get(block.Drive);
             if (d && !d.label)
                 d.label = `${block.IdLabel}`;
         }
+        const fs = ifaces[`${UD}.Filesystem`];
+        if (fs && fs.MountPoints?.length > 0)
+            this._mounted.add(path);
     }
 
     _gone(path) {
@@ -254,8 +295,83 @@ export class UsbSource extends Source {
             this._pending.delete(path);
             return;                       // unplugged before we announced it
         }
+        if (d.safeAt && Date.now() - d.safeAt < 15000)
+            return;                       // "Safe to remove" was just shown: no need to say it again
         this.post({text: `USB removed: ${clip(d.label || d.name, 40)}`,
             kind: 'bad', cat: 'usb', key: `usb:${path}`});
+    }
+}
+
+// ---------------------------------------------------------------- Other USB devices (OTG)
+// Phones, mice, keyboards, adapters ... read from /sys/bus/usb/devices (plain files, no extra tools).
+// Pen drives are left to UsbSource, hubs and built-in parts (camera, Bluetooth chip) are skipped.
+// The folder is only looked at while the switch is on, every 3 seconds.
+const USB_SYS = '/sys/bus/usb/devices';
+
+export class UsbDevSource extends Source {
+    constructor(ctx) {
+        super(ctx);
+        this._info = new Map();      // device id -> {track, name} (read once per device)
+        this._seen = null;           // Map id -> name, or null before the first look
+        this._timer = 0;
+        this._id = this.settings.connect('changed::show-usbdev', () => this._sync());
+        this._sync();
+    }
+
+    _sync() {
+        this.cancel(this._timer);
+        this._timer = 0;
+        this._seen = null;           // no messages for what is already plugged in
+        this._info.clear();
+        if (this.dead || !this.on('show-usbdev'))
+            return;
+        this._scan();
+        this._timer = this.every(3, () => this._scan());
+    }
+
+    _probe(id) {
+        const base = `${USB_SYS}/${id}`;
+        const ifaceClasses = listDir(base)
+            .filter(n => n.startsWith(`${id}:`))
+            .map(n => readFile(`${base}/${n}/bInterfaceClass`));
+        const track = trackUsb({
+            id, cls: readFile(`${base}/bDeviceClass`),
+            removable: readFile(`${base}/removable`), ifaceClasses,
+        });
+        return {track, name: usbName(readFile(`${base}/manufacturer`), readFile(`${base}/product`))};
+    }
+
+    _scan() {
+        const ids = listDir(USB_SYS).filter(n => USB_DEVICE_RE.test(n));
+        const cur = new Map();
+        for (const id of ids) {
+            let info = this._info.get(id);
+            if (!info) {
+                info = this._probe(id);
+                this._info.set(id, info);
+            }
+            if (info.track)
+                cur.set(id, info.name);
+        }
+        for (const id of [...this._info.keys()]) {
+            if (!ids.includes(id))
+                this._info.delete(id);
+        }
+        if (this._seen) {
+            const {added, removed} = diffUsb(this._seen, cur);
+            for (const [id, name] of added)
+                this.post({text: `USB device: ${clip(name, 36)}`, kind: 'good', cat: 'usbdev', key: `usbdev:${id}`});
+            for (const [id, name] of removed)
+                this.post({text: `USB device removed: ${clip(name, 30)}`, kind: 'bad', cat: 'usbdev', key: `usbdev:${id}`});
+        }
+        this._seen = cur;
+    }
+
+    destroy() {
+        if (this._id)
+            this.settings.disconnect(this._id);
+        this._id = 0;
+        super.destroy();
     }
 }
 
@@ -781,6 +897,9 @@ export class WeatherSource extends Source {
         super(ctx);
         this.current = null;          // latest reading, or null
         this._alertState = {rain: false, hot: false, cold: false};
+        this._airState = {high: false, band: -1};
+        this._sun = [];               // sunrise / sunset moments ([{kind, at}])
+        this._sunKey = null;          // the last sun event we told about
         this._http = new Soup.Session({timeout: 10, user_agent: 'informer-gnome-shell-extension'});
         this._abort = new Gio.Cancellable();
         this._place = null;           // {key, lat, lon, name, at}
@@ -795,6 +914,18 @@ export class WeatherSource extends Source {
             }));
         }
         this._restart(8000);                  // give the network a moment after login
+        this.every(60, () => this._sunTick());   // "Sunset in 30 min" needs a look every minute
+    }
+
+    // tells once per sunrise / sunset, shortly before it (no network: uses the last forecast)
+    _sunTick() {
+        if (!this._sun.length || !this.on('weather-enabled') || !this.on('show-sun'))
+            return;
+        const d = sunDue(this._sun, Date.now(), this.num('sun-lead-min'), this._sunKey);
+        if (!d)
+            return;
+        this._sunKey = d.key;
+        this.post({text: d.text, kind: 'info', cat: 'sun', key: 'sun'});
     }
 
     // short form for the idle line: "26°C" or '' when there is nothing yet (the sun icon is added by the bar)
@@ -883,7 +1014,7 @@ export class WeatherSource extends Source {
             `latitude=${place.lat}&longitude=${place.lon}` +
             '&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m' +
             '&hourly=precipitation_probability,temperature_2m&forecast_hours=6' +
-            '&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=2' +
+            '&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset&forecast_days=2' +
             `&temperature_unit=${f ? 'fahrenheit' : 'celsius'}&wind_speed_unit=${f ? 'mph' : 'kmh'}&timezone=auto`);
         const c = j.current;
         if (!c || typeof c.temperature_2m !== 'number')
@@ -930,6 +1061,39 @@ export class WeatherSource extends Source {
         for (const a of res.alerts) {
             this.post({text: clip(a.text, 50), kind: 'warn', cat: 'weatheralert', key: `wx-${a.key}`});
         }
+
+        // sunrise / sunset moments (same request, no new host)
+        this._sun = sunEvents(j.daily, j.utc_offset_seconds ?? 0);
+        this._sunTick();
+
+        // air quality: its own small request, and a failure here never spoils the weather above
+        await this._refreshAir(gen, place);
+    }
+
+    async _refreshAir(gen, place) {
+        if (!this.on('show-airquality')) {
+            if (this.current)
+                this.current.aqi = null;
+            return;
+        }
+        let aqi = null;
+        try {
+            const a = await this._getJson('https://air-quality-api.open-meteo.com/v1/air-quality?' +
+                `latitude=${place.lat}&longitude=${place.lon}&current=us_aqi&timezone=auto`);
+            aqi = a?.current?.us_aqi;
+        } catch (e) {
+            if (!this.dead && gen === this._gen)
+                console.error(`informer: air quality: ${e}`);
+            return;
+        }
+        if (this.dead || gen !== this._gen || typeof aqi !== 'number')
+            return;
+        if (this.current)
+            this.current.aqi = Math.round(aqi);
+        const r = airAlert(this._airState, aqi, this.num('air-aqi-warn'));
+        this._airState = r.state;
+        if (r.alert)
+            this.post({text: clip(r.alert.text, 50), kind: 'warn', cat: 'airquality', key: 'air'});
     }
 
     destroy() {

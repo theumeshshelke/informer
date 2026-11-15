@@ -100,3 +100,7 @@ export function labelFor(p) {
     const name = p.state === 'focus' ? 'Focus' : 'Break';
     return p.running ? name : `Paused`;
 }
+
+export function focusText(n) {
+    return n === 1 ? '1 focus session done today' : `${n} focus sessions done today`;
+}

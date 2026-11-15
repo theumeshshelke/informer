@@ -102,7 +102,14 @@ Settings > General > Backup: **Export** saves all settings to a `.json` file, **
 - **Notification mirror**: shows "App: title" of a new notification, never the text. Off by default. You can limit it to some apps.
 Folder watching and clipboard listening only run while their switch is on.
 
+## New in version 7
+- Messages in the bar: "Safe to remove" after ejecting a pen drive, other USB devices (phone, mouse ...), wired headphones, charging speed in watts, "Battery fully charged", sunrise / sunset, data used this week, focus sessions today, an air quality warning, and the timer ending.
+- Timer: start a countdown or stopwatch from the bar menu. The bar shows `Timer 04:10`. Set the length in Settings > General > Timer.
+- Turn each kind on or off, or change its priority and icon, in Settings > Messages.
+- Icons added: `pendrive` (USB), `headphone`.
+
 ## Network access
+- `air-quality-api.open-meteo.com`: air quality (only while the Air quality message kind is on).
 - `api.open-meteo.com`, `geocoding-api.open-meteo.com`: weather (can be turned off).
 - `ipwho.is`: place of your IP for the weather when no city is set, the public IP in the menu (at most every 30 minutes, only while the menu is open or after a VPN connects), and VPN location. Looked up at login only if you turn on "Look up the public IP at login".
 - `1.1.1.1:443`: latency and internet checks (a plain connection, no data sent).

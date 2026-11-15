@@ -613,5 +613,124 @@
       <default>true</default>
       <summary>Show the icon for layout messages</summary>
     </key>
+    <key name="show-usbdev" type="b">
+      <default>true</default>
+      <summary>Show other usb devices messages</summary>
+    </key>
+    <key name="priority-usbdev" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of other usb devices messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-usbdev" type="b">
+      <default>true</default>
+      <summary>Show the icon for usbdev messages</summary>
+    </key>
+    <key name="show-headphones" type="b">
+      <default>true</default>
+      <summary>Show headphones messages</summary>
+    </key>
+    <key name="priority-headphones" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of headphones messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-headphones" type="b">
+      <default>true</default>
+      <summary>Show the icon for headphones messages</summary>
+    </key>
+    <key name="show-focusstats" type="b">
+      <default>true</default>
+      <summary>Show focus sessions today messages</summary>
+    </key>
+    <key name="priority-focusstats" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of focus sessions today messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-focusstats" type="b">
+      <default>true</default>
+      <summary>Show the icon for focusstats messages</summary>
+    </key>
+    <key name="show-timer" type="b">
+      <default>true</default>
+      <summary>Show timer messages</summary>
+    </key>
+    <key name="priority-timer" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of timer messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-timer" type="b">
+      <default>true</default>
+      <summary>Show the icon for timer messages</summary>
+    </key>
+    <key name="show-airquality" type="b">
+      <default>true</default>
+      <summary>Show air quality messages</summary>
+    </key>
+    <key name="priority-airquality" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of air quality messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-airquality" type="b">
+      <default>true</default>
+      <summary>Show the icon for airquality messages</summary>
+    </key>
+    <key name="show-dataweek" type="b">
+      <default>true</default>
+      <summary>Show data used this week messages</summary>
+    </key>
+    <key name="priority-dataweek" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of data used this week messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-dataweek" type="b">
+      <default>true</default>
+      <summary>Show the icon for dataweek messages</summary>
+    </key>
+    <key name="show-sun" type="b">
+      <default>true</default>
+      <summary>Show sunrise / sunset messages</summary>
+    </key>
+    <key name="priority-sun" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of sunrise / sunset messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-sun" type="b">
+      <default>true</default>
+      <summary>Show the icon for sun messages</summary>
+    </key>
+    <key name="sun-lead-min" type="i">
+      <default>30</default>
+      <range min="5" max="120"/>
+      <summary>Minutes before sunrise or sunset to tell you</summary>
+    </key>
+    <key name="air-aqi-warn" type="i">
+      <default>150</default>
+      <range min="51" max="500"/>
+      <summary>Warn when the air quality index (US AQI) is at least this</summary>
+    </key>
+    <key name="data-week-hours" type="i">
+      <default>6</default>
+      <range min="1" max="24"/>
+      <summary>Hours between "data used this week" messages</summary>
+    </key>
+    <key name="timer-minutes" type="i">
+      <default>10</default>
+      <range min="1" max="720"/>
+      <summary>Length of the countdown timer in minutes</summary>
+    </key>
+    <key name="timer-sound" type="b">
+      <default>true</default>
+      <summary>Play a sound when the countdown timer ends</summary>
+    </key>
+    <key name="focus-today" type="s">
+      <default>''</default>
+      <summary>Focus sessions finished today (kept by the extension, do not edit)</summary>
+    </key>
   </schema>
 </schemalist>

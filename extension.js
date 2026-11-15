@@ -27,16 +27,18 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {CATEGORIES, HIGH, HOURLY, LOW, NORMAL, CRITICAL, THOUGHTS} from './data.js';
 import {MessageQueue} from './queue.js';
 import {levelColor, speedLevel} from './speedlogic.js';
-import {UsageTracker} from './usage.js';
+import {DayCounter, UsageTracker} from './usage.js';
 import {RingBuffer, graphPoints, hexToRgb} from './sparkline.js';
-import {batteryTime, fmtHM, parseLocalIp, parseWifi} from './sysinfo.js';
-import {Pomodoro, eventText, fmtClock, labelFor} from './pomodoro.js';
-import {placeText} from './publicip.js';
+import {batteryTime, chargeWatts, fmtHM, fmtWatts, parseWifi} from './sysinfo.js';
+import {Pomodoro, eventText, fmtClock, focusText, labelFor} from './pomodoro.js';
+import {SimpleTimer, fmtTimer, timerDoneText, timerLabel} from './timerlogic.js';
+import {parseHeadphones} from './headphones.js';
+import {aqiName} from './airlogic.js';
 import {clip, fmtBytes, listDir, readFile, run} from './util.js';
 import {
     CalendarSource, CameraSource, InternetSource, KeyboardSource,
     ClipboardSource, FilesSource, LayoutSource, MediaSource, NotifySource, PingSource, PublicIpSource,
-    ReminderSource, SystemSource, UsbSource, WeatherSource,
+    ReminderSource, SystemSource, UsbDevSource, UsbSource, WeatherSource,
 } from './sources.js';
 
 // ---------------- look & feel (code-level settings) ----------------
@@ -162,7 +164,15 @@ function iconFor(m) {
     case 'reminder':
     case 'notifications': return 'alert';
     case 'latency': return 'alert';
-    case 'datausage': return 'down';
+    case 'datausage':
+    case 'dataweek': return 'down';
+    case 'usb':
+    case 'usbdev': return 'pendrive';
+    case 'headphones': return 'headphone';
+    case 'sun': return 'sun';
+    case 'focusstats':
+    case 'timer': return 'timer';
+    case 'airquality': return 'alert';
     case 'syswarn':
     case 'calendar': return 'alert';
     default: return m.kind === 'warn' ? 'alert' : null;
@@ -199,9 +209,16 @@ function readBatteryDetail() {
             energyNow: n('energy_now'), energyFull: n('energy_full'), powerNow: n('power_now'),
             chargeNow: n('charge_now'), chargeFull: n('charge_full'), currentNow: n('current_now'),
         });
-        return {pct: parseInt(cap), status, sec};
+        const watts = status === 'Charging'
+            ? chargeWatts({powerNow: n('power_now'), currentNow: n('current_now'), voltageNow: n('voltage_now')}) : null;
+        return {pct: parseInt(cap), status, sec, watts};
     }
     return null;
+}
+
+// Charging speed in watts right now, or null when the machine does not tell us
+function readChargeWatts() {
+    return readBatteryDetail()?.watts ?? null;
 }
 
 // Airplane mode = every radio (Wi-Fi, Bluetooth, mobile) is blocked.
@@ -245,7 +262,6 @@ class InformerIndicator extends PanelMenu.Button {
         this._menuBusy = false;
         this._menuN = 0;
         this._wifiInfo = null;
-        this._localIp = '';
         this._buildMenu();
 
         this._q = new MessageQueue();
@@ -281,6 +297,13 @@ class InformerIndicator extends PanelMenu.Button {
         this._usage = new UsageTracker(this._s.get_string('data-usage'));
         this._usageSaveN = 0;
         this._usageDue = Date.now() + this._int('data-usage-hours') * 3600000;
+        this._weekDue = Date.now() + this._int('data-week-hours') * 3600000;
+        this._focus = new DayCounter(this._s.get_string('focus-today'));   // focus sessions finished today
+        this._tmr = new SimpleTimer();      // countdown / stopwatch (ticked by the 1 s heartbeat while active)
+        this._hp = null;                    // wired headphones plugged in? null = not known yet
+        this._hpBusy = false;
+        this._hpN = 0;
+        this._chargeAt = 0;                 // when to tell "Charging: 45% (38 W)" (a moment after plugging in)
         this._busy = {};
         this._pending = {};
         this._deb = {};
@@ -304,6 +327,8 @@ class InformerIndicator extends PanelMenu.Button {
         this._pollSlow();
         this._pollVol();
         this._pollMic();
+        this._pollHeadphones();
+        this._hpSig = this._s.connect('changed::show-headphones', () => this._pollHeadphones());
         this._subscribeDBus();
         this._startPactl();
 
@@ -316,7 +341,7 @@ class InformerIndicator extends PanelMenu.Button {
         this._pub = null;
         for (const S of [MediaSource, UsbSource, KeyboardSource, CameraSource,
             InternetSource, SystemSource, CalendarSource, WeatherSource, PingSource, PublicIpSource,
-            ClipboardSource, FilesSource, ReminderSource, NotifySource, LayoutSource]) {
+            ClipboardSource, FilesSource, ReminderSource, NotifySource, LayoutSource, UsbDevSource]) {
             try {
                 const src = new S(ctx);
                 this._sources.push(src);
@@ -352,6 +377,7 @@ class InformerIndicator extends PanelMenu.Button {
             this._graphTick();
             this._render();
             this._pomTick();
+            this._tmrTick();
             this._refreshMenu();
             this._tick = (this._tick + 1) % 3;
             if (this._tick === 0)
@@ -359,6 +385,8 @@ class InformerIndicator extends PanelMenu.Button {
             if (!this._pactlOk) {
                 this._pollVol();             // fallback when pactl subscribe is unavailable
                 this._pollMic();
+                if (++this._hpN % 5 === 0)
+                    this._pollHeadphones();
             }
             return GLib.SOURCE_CONTINUE;
         });
@@ -405,38 +433,42 @@ class InformerIndicator extends PanelMenu.Button {
     }
 
     _buildMenu() {
+        // Short on purpose: only what you need at a glance. The rest is in the bar or in Settings.
         const m = this.menu;
         m.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Weather'));
         this._infoRow('wx1', 'sun');
         this._infoRow('wx2', 'sun');
-        this._infoRow('wx3', 'sun');
-        this._infoRow('wx4', 'sun');
+        this._infoRow('wx3', 'alert');          // air quality: only shown when it is bad
         m.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Network'));
-        this._infoRow('speed', 'down');
-        this._infoRow('today', 'down');
+        this._infoRow('data', 'down');
         this._infoRow('wifi', 'wifi-on');
-        this._infoRow('ip', null, 'network-wired-symbolic');
-        this._infoRow('ping', null, 'network-transmit-receive-symbolic');
-        this._infoRow('pub', null, 'network-server-symbolic');
-        m.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('System'));
-        this._infoRow('cpu', null, 'utilities-system-monitor-symbolic');
-        this._infoRow('ram', null, 'utilities-system-monitor-symbolic');
-        this._infoRow('temp', null, 'temperature-symbolic');
-        this._infoRow('disk', null, 'drive-harddisk-symbolic');
-        m.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Battery'));
+        m.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('This computer'));
+        this._infoRow('sys', null, 'utilities-system-monitor-symbolic');
         this._infoRow('bat', 'battery-full');
-        this._infoRow('batt', 'battery-full');
-        m.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Focus timer'));
-        this._infoRow('pom', 'timer');
+        m.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Timers'));
+        this._infoRow('pom', 'timer');          // only while the focus timer is on
+        this._infoRow('tmr', 'timer');          // only while the countdown / stopwatch is on
         this._pomBtn = new PopupMenu.PopupMenuItem('Start focus timer');
         this._pomBtn.connect('activate', () => this._pomDo('toggle'));
         m.addMenuItem(this._pomBtn);
-        const skipBtn = new PopupMenu.PopupMenuItem('Skip');
-        skipBtn.connect('activate', () => this._pomDo('skip'));
-        m.addMenuItem(skipBtn);
-        const resetBtn = new PopupMenu.PopupMenuItem('Reset');
-        resetBtn.connect('activate', () => this._pomDo('reset'));
-        m.addMenuItem(resetBtn);
+        this._pomSkip = new PopupMenu.PopupMenuItem('Skip focus phase');
+        this._pomSkip.connect('activate', () => this._pomDo('skip'));
+        m.addMenuItem(this._pomSkip);
+        this._pomReset = new PopupMenu.PopupMenuItem('Reset focus timer');
+        this._pomReset.connect('activate', () => this._pomDo('reset'));
+        m.addMenuItem(this._pomReset);
+        this._tmrCount = new PopupMenu.PopupMenuItem('Start countdown');
+        this._tmrCount.connect('activate', () => this._tmrDo('count'));
+        m.addMenuItem(this._tmrCount);
+        this._tmrWatch = new PopupMenu.PopupMenuItem('Start stopwatch');
+        this._tmrWatch.connect('activate', () => this._tmrDo('watch'));
+        m.addMenuItem(this._tmrWatch);
+        this._tmrPause = new PopupMenu.PopupMenuItem('Pause');
+        this._tmrPause.connect('activate', () => this._tmrDo('toggle'));
+        m.addMenuItem(this._tmrPause);
+        this._tmrReset = new PopupMenu.PopupMenuItem('Reset timer');
+        this._tmrReset.connect('activate', () => this._tmrDo('reset'));
+        m.addMenuItem(this._tmrReset);
         m.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         const thought = new PopupMenu.PopupMenuItem('Next good thought');
         thought.connect('activate', () => this._showThought(true));
@@ -449,7 +481,6 @@ class InformerIndicator extends PanelMenu.Button {
         this._menuSig = m.connect('open-state-changed', (_m, open) => {
             if (open) {
                 this._menuN = 0;
-                this._pub?.ensure();        // goes online only when the answer is 30+ minutes old
                 this._refreshMenu();
                 this._refreshMenuSlow();
             }
@@ -469,62 +500,80 @@ class InformerIndicator extends PanelMenu.Button {
     _refreshMenu() {
         if (this._destroyed || !this.menu.isOpen)
             return;
+        const now = Date.now();
         const w = this._weather?.current;
         const u = w?.unit ?? 'C';
         if (w) {
             this._setRow('wx1', `${w.city}: ${w.temp}\u00b0${u}, feels ${w.feels}\u00b0, ${w.desc}`);
-            this._setRow('wx2', `Humidity ${w.humidity}%, wind ${w.wind} ${w.windUnit}`);
-            this._setRow('wx3', Number.isFinite(w.hi) ? `Today ${w.hi}\u00b0 / ${w.lo}\u00b0, rain ${w.rain ?? 0}%` : '');
-            this._setRow('wx4', w.tomorrow && Number.isFinite(w.tomorrow.hi)
-                ? `Tomorrow ${w.tomorrow.hi}\u00b0 / ${w.tomorrow.lo}\u00b0, rain ${w.tomorrow.rain ?? 0}%` : '');
+            this._setRow('wx2', Number.isFinite(w.hi) ? `Today ${w.hi}\u00b0 / ${w.lo}\u00b0, rain ${w.rain ?? 0}%` : '');
+            const bad = this._bool('show-airquality') && Number.isFinite(w.aqi) && w.aqi >= this._int('air-aqi-warn');
+            this._setRow('wx3', bad ? `Air quality: AQI ${w.aqi} (${aqiName(w.aqi)})` : '');
         } else {
             this._setRow('wx1', 'Weather: not available');
-            for (const k of ['wx2', 'wx3', 'wx4'])
-                this._setRow(k, '');
+            this._setRow('wx2', '');
+            this._setRow('wx3', '');
         }
 
-        this._setRow('speed', `Speed: ${fmtSpeed(this._speed.down)} down, ${fmtSpeed(this._speed.up)} up`);
-        this._setRow('today', this._usageText());
+        const wk = this._usage.week();
+        this._setRow('data', `Data: ${fmtBytes(this._usage.rx + this._usage.tx)} today, ${fmtBytes(wk.rx + wk.tx)} in 7 days`);
         this._setRow('wifi', this._wifiInfo ? `Wi-Fi: ${clip(this._wifiInfo.ssid, 24)} (${this._wifiInfo.signal}%)` : 'Wi-Fi: not connected');
-        this._setRow('ip', this._localIp ? `Local IP: ${this._localIp}` : '');
-
-        const lat = this._ping?.last;
-        this._setRow('ping', lat != null ? `Ping: ${lat} ms` : '');
-        const pub = this._pub?.info;
-        this._setRow('pub', this._pub ? (pub ? `Public IP: ${pub.ip} (${clip(placeText(pub), 28)})` : 'Public IP: checking...') : '');
-
-        const pm = this._pom;
-        this._setRow('pom', pm.active ? `${pm.state === 'focus' ? 'Focus' : 'Break'}: ${fmtClock(pm.left(Date.now()))}${pm.running ? '' : ' (paused)'}` : 'Focus timer: off');
-        this._pomBtn.label.text = pm.running ? 'Pause' : (pm.active ? 'Resume' : 'Start focus timer');
 
         const sys = this._sysSource?.snapshot();
-        this._setRow('cpu', sys?.cpu != null ? `CPU: ${sys.cpu}%` : 'CPU: ...');
-        this._setRow('ram', sys?.ram != null ? `RAM: ${sys.ram}%` : '');
-        this._setRow('temp', sys?.temp ? `Temperature: ${Math.round(sys.temp)}\u00b0C` : '');
-        this._setRow('disk', sys?.diskFree ? `Disk free: ${fmtBytes(sys.diskFree.free)}` : '');
+        const bits = [];
+        if (sys?.cpu != null)
+            bits.push(`CPU ${sys.cpu}%`);
+        if (sys?.ram != null)
+            bits.push(`RAM ${sys.ram}%`);
+        if (sys?.temp)
+            bits.push(`${Math.round(sys.temp)}\u00b0C`);
+        if (sys?.diskFree)
+            bits.push(`Disk ${fmtBytes(sys.diskFree.free)} free`);
+        this._setRow('sys', bits.join('  \u00b7  '));
 
         const bat = readBatteryDetail();
-        this._setRow('bat', bat ? `Battery: ${bat.pct}%, ${bat.status.toLowerCase()}` : '');
-        this._setRow('batt', bat?.sec ? `${bat.status === 'Charging' ? 'Full in' : 'Time left:'} ${fmtHM(bat.sec)}` : '');
+        let bt = '';
+        if (bat) {
+            const extra = [];
+            if (bat.watts)
+                extra.push(fmtWatts(bat.watts));
+            if (bat.sec)
+                extra.push(`${bat.status === 'Charging' ? 'full in' : 'left'} ${fmtHM(bat.sec)}`);
+            bt = `Battery: ${bat.pct}%, ${bat.status.toLowerCase()}${extra.length ? ` (${extra.join(', ')})` : ''}`;
+        }
+        this._setRow('bat', bt);
+
+        // timers: a line only while one is on; start buttons only while it is off
+        const pm = this._pom;
+        this._setRow('pom', pm.active ? `${pm.state === 'focus' ? 'Focus' : 'Break'}: ${fmtClock(pm.left(now))}${pm.running ? '' : ' (paused)'}` : '');
+        this._pomBtn.label.text = pm.running ? 'Pause focus timer' : (pm.active ? 'Resume focus timer' : 'Start focus timer');
+        this._pomSkip.visible = pm.active;
+        this._pomReset.visible = pm.active;
+
+        const tm = this._tmr;
+        this._setRow('tmr', tm.active
+            ? `${tm.mode === 'countdown' ? 'Timer' : 'Stopwatch'}: ${fmtTimer(tm.shown(now), tm.mode === 'countdown')}${tm.running ? '' : ' (paused)'}`
+            : '');
+        this._tmrCount.visible = !tm.active;
+        this._tmrCount.label.text = `Start countdown (${this._int('timer-minutes')} min)`;
+        this._tmrWatch.visible = !tm.active;
+        this._tmrPause.visible = tm.active;
+        this._tmrPause.label.text = tm.running ? 'Pause timer' : 'Resume timer';
+        this._tmrReset.visible = tm.active;
 
         if (++this._menuN % 5 === 0)
             this._refreshMenuSlow();
     }
 
-    // slower rows (small commands), on open and then every 5 seconds while open
+    // Wi-Fi name, on open and then every 5 seconds while open
     async _refreshMenuSlow() {
         if (this._menuBusy || this._destroyed)
             return;
         this._menuBusy = true;
         try {
-            const [wifi, ip] = await Promise.all([
-                run(['nmcli', '-t', '-f', 'ACTIVE,SSID,SIGNAL', 'dev', 'wifi']),
-                run(['ip', '-4', '-o', 'addr', 'show', 'scope', 'global']),
-            ]);
+            const wifi = await run(['nmcli', '-t', '-f', 'ACTIVE,SSID,SIGNAL', 'dev', 'wifi']);
             if (this._destroyed)
                 return;
             this._wifiInfo = parseWifi(wifi);
-            this._localIp = parseLocalIp(ip);
         } finally {
             this._menuBusy = false;
         }
@@ -543,7 +592,7 @@ class InformerIndicator extends PanelMenu.Button {
         else if (what === 'reset')
             this._pom.reset();
         if (ev)
-            this._pomEvent(ev);
+            this._pomEvent(ev, false);       // skipping a focus does not count as a finished session
         this._render();
     }
 
@@ -552,14 +601,51 @@ class InformerIndicator extends PanelMenu.Button {
             return;
         const ev = this._pom.tick(Date.now());
         if (ev)
-            this._pomEvent(ev);
+            this._pomEvent(ev, true);
     }
 
-    _pomEvent(ev) {
+    _pomEvent(ev, natural) {
         this._flash(eventText(ev), ev.from === 'focus' ? 'good' : 'info', 'pomodoro', {key: 'pomodoro'});
+        if (ev.from === 'focus' && natural) {
+            const n = this._focus.inc();
+            try {
+                this._s.set_string('focus-today', this._focus.toJSON());
+            } catch (e) { /* ignore */ }
+            this._flash(focusText(n), 'good', 'focusstats', {key: 'focusstats'});
+        }
         if (this._bool('pomodoro-sound')) {
             try {
                 global.display.get_sound_player().play_from_theme('complete', 'Focus timer', null);
+            } catch (e) { /* no sound player: stay quiet */ }
+        }
+    }
+
+    // ------------------------------------------------ countdown / stopwatch
+    _tmrDo(what) {
+        if (this._destroyed)
+            return;
+        const now = Date.now();
+        if (what === 'count')
+            this._tmr.startCountdown(Math.max(1, this._int('timer-minutes')) * 60000, now);
+        else if (what === 'watch')
+            this._tmr.startStopwatch(now);
+        else if (what === 'toggle')
+            this._tmr.toggle(now);
+        else if (what === 'reset')
+            this._tmr.reset();
+        this._render();
+    }
+
+    _tmrTick() {
+        if (!this._tmr.active)
+            return;
+        const ev = this._tmr.tick(Date.now());
+        if (!ev)
+            return;
+        this._flash(timerDoneText(ev.total), 'good', 'timer', {key: 'timer', force: true});   // you asked for it: also in quiet hours
+        if (this._bool('timer-sound')) {
+            try {
+                global.display.get_sound_player().play_from_theme('complete', 'Timer', null);
             } catch (e) { /* no sound player: stay quiet */ }
         }
     }
@@ -690,6 +776,11 @@ class InformerIndicator extends PanelMenu.Button {
         return `Today: ${fmtBytes(this._usage.rx)} down, ${fmtBytes(this._usage.tx)} up`;
     }
 
+    _weekText() {
+        const w = this._usage.week();
+        return `Last 7 days: ${fmtBytes(w.rx)} down, ${fmtBytes(w.tx)} up`;
+    }
+
     // called once a second from _sampleNet: save at most once a minute, post every N hours
     _usageTick() {
         if (++this._usageSaveN >= 60) {
@@ -699,6 +790,10 @@ class InformerIndicator extends PanelMenu.Button {
         if (Date.now() >= this._usageDue) {
             this._usageDue = Date.now() + Math.max(1, this._int('data-usage-hours')) * 3600000;
             this._flash(this._usageText(), 'info', 'datausage', {key: 'datausage'});
+        }
+        if (Date.now() >= this._weekDue) {
+            this._weekDue = Date.now() + Math.max(1, this._int('data-week-hours')) * 3600000;
+            this._flash(this._weekText(), 'info', 'dataweek', {key: 'dataweek'});
         }
     }
 
@@ -725,6 +820,15 @@ class InformerIndicator extends PanelMenu.Button {
             const pomIcon = this._bool('show-icons') && this._bool('icon-pomodoro');
             this._show(pomIcon ? [{icon: 'timer', color: fc}, {text: t, color: fc}] : [{text: t, color: fc}],
                 fc, 'idle:pomodoro', 8);
+            return;
+        }
+        if (this._tmr.active) {
+            const tm = this._tmr;
+            const t = `${timerLabel(tm)} ${fmtTimer(tm.shown(Date.now()), tm.mode === 'countdown')}`;
+            const fc = this._colorFor('focus');
+            const tIcon = this._bool('show-icons') && this._bool('icon-timer');
+            this._show(tIcon ? [{icon: 'timer', color: fc}, {text: t, color: fc}] : [{text: t, color: fc}],
+                fc, 'idle:timer', 9);
             return;
         }
         if (this._str('idle-display') === 'greeting') {
@@ -1154,11 +1258,38 @@ class InformerIndicator extends PanelMenu.Button {
                     this._debounce('vol', 60, () => this._pollVol());
                 if (/'change' on (source|server)/.test(line))
                     this._debounce('mic', 80, () => this._pollMic());
+                if (/'(change|new|remove)' on (sink|card)/.test(line))
+                    this._debounce('hp', 400, () => this._pollHeadphones());
                 this._readPactl();
             } catch (e) {
                 this._pactlOk = false;
             }
         });
+    }
+
+    // ------------------------------------------------ wired headphones
+    // Reads the sound outputs with pactl (an optional tool): quiet if it is missing.
+    async _pollHeadphones() {
+        if (this._hpBusy || this._destroyed)
+            return;
+        this._hpBusy = true;
+        try {
+            if (!this._bool('show-headphones')) {
+                this._hp = null;                 // switched off: the next time starts fresh (no message)
+                return;
+            }
+            const st = parseHeadphones(await run(['pactl', '--format=json', 'list', 'sinks']));
+            if (this._destroyed || !st)
+                return;
+            const prev = this._hp;
+            this._hp = st.connected;
+            if (prev === null || prev === st.connected)
+                return;
+            this._flash(st.connected ? 'Headphones connected' : 'Headphones unplugged',
+                st.connected ? 'good' : 'bad', 'headphones', {key: 'headphones'});
+        } finally {
+            this._hpBusy = false;
+        }
     }
 
     // ------------------------------------------------ Wi-Fi, Bluetooth, VPN, hotspot, airplane
@@ -1351,13 +1482,22 @@ class InformerIndicator extends PanelMenu.Button {
         // plugged in / unplugged / full
         if (prev && bat.status !== prev.status) {
             if (bat.status === 'Charging')
-                this._flash(`Charging: ${bat.pct}%`, 'good', 'battery', {key: 'battery'});
+                this._chargeAt = now + 2000;      // the charging speed needs a moment to settle
             else if (bat.status === 'Discharging')
                 this._flash(`Discharging: ${bat.pct}%`, 'bad', 'battery', {key: 'battery'});
             else if (bat.status === 'Full')
-                this._flash('Battery full: 100%', 'good', 'battery', {key: 'battery'});
+                this._flash('Battery fully charged: 100%', 'good', 'battery', {key: 'battery'});
             else if (bat.status === 'Not charging')
                 this._flash(`Plugged in, not charging: ${bat.pct}%`, 'info', 'battery', {key: 'battery'});
+        }
+
+        // "Charging: 45% (38 W)" a moment after plugging in (without the watts if the machine does not tell)
+        if (bat.status !== 'Charging') {
+            this._chargeAt = 0;
+        } else if (this._chargeAt && now >= this._chargeAt) {
+            this._chargeAt = 0;
+            const w = readChargeWatts();
+            this._flash(`Charging: ${bat.pct}%${w ? ` (${fmtWatts(w)})` : ''}`, 'good', 'battery', {key: 'battery'});
         }
 
         // "Unplug at 80%" reminder (protects the battery); repeats while still charging
@@ -1428,6 +1568,10 @@ class InformerIndicator extends PanelMenu.Button {
         if (this._sid) {
             this._s.disconnect(this._sid);
             this._sid = 0;
+        }
+        if (this._hpSig) {
+            this._s.disconnect(this._hpSig);
+            this._hpSig = 0;
         }
         if (this._keyBound) {
             try {

@@ -68,3 +68,19 @@ export function parseLocalIp(text) {
     }
     return '';
 }
+
+// Charging speed in watts from /sys/class/power_supply numbers (power_now in uW,
+// or current_now in uA times voltage_now in uV). Returns watts or null.
+export function chargeWatts(o) {
+    const n = v => (Number.isFinite(v) && v > 0 ? v : 0);
+    let w = 0;
+    if (n(o.powerNow))
+        w = o.powerNow / 1e6;
+    else if (n(o.currentNow) && n(o.voltageNow))
+        w = o.currentNow * o.voltageNow / 1e12;
+    return w >= 0.5 && w < 400 ? Math.round(w * 10) / 10 : null;
+}
+
+export function fmtWatts(w) {
+    return `${w >= 10 ? Math.round(w) : w.toFixed(1)} W`;
+}

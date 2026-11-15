@@ -8,7 +8,7 @@
 export const FORMAT = 'informer-settings';
 export const VERSION = 1;
 // kept by the extension itself (not a preference): never exported, refused on import
-export const NEVER = ['data-usage'];
+export const NEVER = ['data-usage', 'focus-today'];
 
 const MAX_TEXT = 100000;      // longest string we accept
 const MAX_ITEMS = 5000;       // longest list we accept

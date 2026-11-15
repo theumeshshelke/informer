@@ -407,6 +407,8 @@ export default class InformerPrefs extends ExtensionPreferences {
         basics.add(spinRow(settings, 'speed-slow-kbps', 'Slow below (KB/s)', '', 0, 100000));
         basics.add(spinRow(settings, 'data-usage-hours', 'Data used today: show every (hours)',
             'Shows how much you downloaded and uploaded today', 1, 24));
+        basics.add(spinRow(settings, 'data-week-hours', 'Data used this week: show every (hours)',
+            'Shows the total of the last 7 days', 1, 24));
 
         const nameRow = new Adw.EntryRow({title: 'Your name (used when the default line is the greeting)'});
         settings.bind('name', nameRow, 'text', Gio.SettingsBindFlags.DEFAULT);
@@ -468,6 +470,16 @@ export default class InformerPrefs extends ExtensionPreferences {
         });
         focus.add(keyRow);
 
+        // ---- countdown / stopwatch
+        const tmr = new Adw.PreferencesGroup({
+            title: 'Timer',
+            description: 'A countdown or a stopwatch from the bar menu. While it runs, the bar shows it ' +
+                'instead of the speed (the focus timer comes first if both run).',
+        });
+        general.add(tmr);
+        tmr.add(spinRow(settings, 'timer-minutes', 'Countdown length (minutes)', '', 1, 720));
+        tmr.add(switchRow(settings, 'timer-sound', 'Play a sound when the countdown ends'));
+
         // ---- network checks
         const net = new Adw.PreferencesGroup({
             title: 'Network checks',
@@ -526,6 +538,16 @@ export default class InformerPrefs extends ExtensionPreferences {
             'Warn when rain is this likely within 2 hours', 10, 100));
         wxAlert.add(spinRow(settings, 'weather-hot', 'Hot at (\u00b0C)', '', 20, 60));
         wxAlert.add(spinRow(settings, 'weather-cold', 'Cold at (\u00b0C)', '', -40, 20));
+
+        const wxMore = new Adw.PreferencesGroup({
+            title: 'Sunrise, sunset and air quality',
+            description: 'Turn each message on or off in Messages. Sunrise and sunset come from the same ' +
+                'weather request. Air quality asks air-quality-api.open-meteo.com too.',
+        });
+        weatherPage.add(wxMore);
+        wxMore.add(spinRow(settings, 'sun-lead-min', 'Tell me before sunrise / sunset (minutes)', '', 5, 120));
+        wxMore.add(spinRow(settings, 'air-aqi-warn', 'Warn when the air quality index is at least',
+            'US AQI: 100 moderate, 150 unhealthy, 200 very unhealthy', 51, 500));
 
         // ================================================= Messages + priority
         const messages = new Adw.PreferencesPage({
