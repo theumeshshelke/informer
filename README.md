@@ -111,16 +111,17 @@ Folder watching and clipboard listening only run while their switch is on.
 ## Icons for version 8 (still pictures, no animation)
 `monitor`, `ethernet`, `gamepad`, `printer`, `moon` (night light), `power` (power mode), `record`, `location`, `touchpad`, `brightness`, `speaker`, `hotspot`, `sleep`, `thermometer`, `reboot`, `network-switch`. All are one white shape, so they take the message colour.
 
-## New in version 8 (in progress)
+## New in version 8
 - **Night Light** "Night Light is ON / OFF" (Low), **Location** "Location is ON / OFF" (Low), **Touchpad** "Touchpad enabled / disabled" (Normal), **Power mode** "Power saver / Balanced / Performance" (Normal). Each has its own switch, priority and icon switch in Settings > Messages. They only speak when something changes, never at start. If your system lacks the setting or `power-profiles-daemon`, that message quietly does nothing. No new network hosts.
 - **Monitor** "Monitor connected / removed", **Ethernet** "Ethernet connected / unplugged" (checked with the Wi-Fi poll), **Controller** "Controller connected: NAME / removed" (needs `/dev/input/js*`), **Printer** "Printer connected / removed" (USB printers only), **Brightness** "Brightness 60%" (laptop screens; a slider drag shows one message). Same rules: own switch, priority and icon switch each, silent at start, no new network hosts.
+- **Sound output** "Sound: Speakers / HDMI / Headphones" when the default output changes (needs `pactl`; skipped right after "Headphones connected"), **Hotspot devices** "2 devices on your hotspot" (only while the hotspot is on, only when the number changes), **Welcome back** "Welcome back, slept 2h 10m" (sleeps under 1 minute are ignored), **CPU too hot** "CPU is slowing down: too hot" (Intel only, at most every 10 minutes), **Reboot needed** "Reboot needed to finish updates" (Ubuntu, once per login), **Wi-Fi switch** "Switched to NAME" (replaces "Wi-Fi is connected to ..." when you move from one Wi-Fi to another), **Screen recording** "Screen recording started / stopped" (the built-in recorder only, not OBS). Own switch, priority and icon switch each. No new network hosts.
 
 ## Network access
 - `air-quality-api.open-meteo.com`: air quality (only while the Air quality message kind is on).
 - `api.open-meteo.com`, `geocoding-api.open-meteo.com`: weather (can be turned off).
 - `ipwho.is`: place of your IP for the weather when no city is set, the public IP in the menu (at most every 30 minutes, only while the menu is open or after a VPN connects), and VPN location. Looked up at login only if you turn on "Look up the public IP at login".
 - `1.1.1.1:443`: latency and internet checks (a plain connection, no data sent).
-- Phase D (speed graph, input language, Do Not Disturb, backup) adds no network access.
+- Phase D (speed graph, input language, Do Not Disturb, backup) and version 8 (the 16 new messages) add no network access.
 
 ## Files
 - `extension.js` - the bar item, queue wiring, Wi-Fi / Bluetooth / volume / mic / battery
@@ -130,6 +131,7 @@ Folder watching and clipboard listening only run while their switch is on.
 - `pomodoro.js`, `pinglogic.js`, `publicip.js` - focus timer, latency and public IP logic (no GNOME imports)
 - `sparkline.js`, `settingsio.js` - speed graph maths and settings export / import checks (no GNOME imports)
 - `reminders.js`, `filters.js` - reminder times and file / notification filters (no GNOME imports)
+- `switchlogic.js`, `hwlogic.js`, `eventlogic.js` - texts and checks for the version 8 messages (no GNOME imports)
 - `queue.js` - the priority queue (no GNOME imports, easy to test)
 - `icons/` - the SVG icons
 - `data.js` - message kinds, default priorities, hourly lines, built-in thoughts

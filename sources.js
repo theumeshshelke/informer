@@ -10,7 +10,7 @@ import Soup from 'gi://Soup?version=3.0';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Keyboard from 'resource:///org/gnome/shell/ui/status/keyboard.js';
 
-import {run, readFile, listDir, clip, fmtBytes, fmtDuration} from './util.js';
+import {run, readFile, listDir, clip, fmtBytes, fmtDuration, fileExists} from './util.js';
 import {rainSoon, weatherAlerts} from './weatherlogic.js';
 import {sunEvents, sunDue} from './sunlogic.js';
 import {airAlert} from './airlogic.js';
@@ -22,6 +22,7 @@ import {dueReminders, parseReminders, pruneFired, serializeReminders} from './re
 import {isStale, maskIp, parseIpwho, placeText} from './publicip.js';
 import {onOffMessage, profileMessage, touchpadMessage} from './switchlogic.js';
 import {JS_RE, gamepadMessage, monitorChange} from './hwlogic.js';
+import {ThrottleWatch, wakeText} from './eventlogic.js';
 
 function getBus(type) {
     try {
@@ -1828,6 +1829,117 @@ export class GamepadSource extends Source {
             this.settings.disconnect(this._id);
         this._id = 0;
         this._stop();
+        super.destroy();
+    }
+}
+
+// ---------------------------------------------------------------- Wake from sleep (version 8)
+// logind (on the system bus) says PrepareForSleep(true) before sleep and PrepareForSleep(false) after.
+// The length of the sleep comes from our own clock, not from the signal. Under 1 minute: no message.
+export class WakeSource extends Source {
+    constructor(ctx) {
+        super(ctx);
+        this._start = null;
+        this.sub(this.system, 'org.freedesktop.login1', 'org.freedesktop.login1.Manager', 'PrepareForSleep',
+            '/org/freedesktop/login1', null, (_who, params) => this._sleep(params.get_child_value(0).recursiveUnpack()));
+    }
+
+    _sleep(going) {
+        if (going) {
+            this._start = Date.now();
+            return;
+        }
+        const start = this._start;
+        this._start = null;
+        const text = start === null ? null : wakeText(start, Date.now());
+        if (text)
+            this.post({text, kind: 'info', cat: 'wake', key: 'wake'});
+    }
+}
+
+// ---------------------------------------------------------------- CPU overheat (version 8)
+// Intel CPUs count how often they slowed down because of heat. If the file is not there
+// (AMD, ARM, a virtual machine) nothing runs at all.
+const THROTTLE_FILE = '/sys/devices/system/cpu/cpu0/thermal_throttle/core_throttle_count';
+
+export class OverheatSource extends Source {
+    constructor(ctx) {
+        super(ctx);
+        this._w = new ThrottleWatch();
+        if (!fileExists(THROTTLE_FILE))
+            return;
+        this._check();                  // the first reading is silent
+        this.every(30, () => this._check());
+    }
+
+    _check() {
+        if (!this.on('show-overheat')) {
+            this._w.last = null;        // switched off: start fresh when it is turned on again
+            return;
+        }
+        if (this._w.feed(readFile(THROTTLE_FILE), Date.now()))
+            this.post({text: 'CPU is slowing down: too hot', kind: 'warn', cat: 'overheat', key: 'overheat'});
+    }
+}
+
+// ---------------------------------------------------------------- Reboot needed (version 8)
+// Ubuntu creates /var/run/reboot-required after updates. We look a little after login, then every
+// 30 minutes, and say it once per login (the flag lives in this module, so turning the extension
+// off and on again does not repeat it).
+const REBOOT_FILE = '/var/run/reboot-required';
+let rebootSaid = false;
+
+export class RebootSource extends Source {
+    constructor(ctx) {
+        super(ctx);
+        this.after(15000, () => this._check());
+        this.every(30 * 60, () => this._check());
+    }
+
+    _check() {
+        if (rebootSaid || !this.on('show-reboot') || !fileExists(REBOOT_FILE))
+            return;
+        rebootSaid = true;
+        this.post({text: 'Reboot needed to finish updates', kind: 'warn', cat: 'reboot', key: 'reboot'});
+    }
+}
+
+// ---------------------------------------------------------------- Screen recording (version 8)
+// The panel's own red recording dot listens to Main.screenshotUI (property screencast-in-progress),
+// so we listen to the same thing. This covers the built-in recorder (the screenshot tool and its
+// shortcut), not other apps such as OBS. If this Shell has no such property we stay quiet.
+export class RecordingSource extends Source {
+    constructor(ctx) {
+        super(ctx);
+        this._ui = Main.screenshotUI;
+        this._id = 0;
+        this._on = null;
+        if (!this._ui || typeof this._ui.screencast_in_progress !== 'boolean') {
+            console.warn('informer: this Shell has no screen recording property, recording messages are off');
+            return;
+        }
+        this._on = this._ui.screencast_in_progress;
+        this._id = this._ui.connect('notify::screencast-in-progress', () => this._changed());
+    }
+
+    _changed() {
+        if (this.dead)
+            return;
+        const now = this._ui.screencast_in_progress === true;
+        if (now === this._on)
+            return;
+        this._on = now;
+        this.post({text: now ? 'Screen recording started' : 'Screen recording stopped',
+            kind: 'warn', cat: 'recording', key: 'recording'});
+    }
+
+    destroy() {
+        if (this._id) {
+            try {
+                this._ui.disconnect(this._id);
+            } catch (e) { /* ignore */ }
+        }
+        this._id = 0;
         super.destroy();
     }
 }

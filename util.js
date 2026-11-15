@@ -34,6 +34,15 @@ export function readFile(path) {
     }
 }
 
+// Does this path exist (file or folder)?
+export function fileExists(path) {
+    try {
+        return GLib.file_test(path, GLib.FileTest.EXISTS);
+    } catch (e) {
+        return false;
+    }
+}
+
 // File names inside a directory ([] if it does not exist).
 export function listDir(path) {
     const names = [];

@@ -391,6 +391,202 @@ ind.menu.isOpen = false;
     console.log('phase 3 ok');
 }
 
+// ---- version 8, phase 4: Wi-Fi switch, Sound output, Hotspot clients, Wake, Overheat, Reboot, Recording
+{
+    ext.disable();
+    const fsx = globalThis.__fs;
+    for (const k of ['show-wifiswitch', 'show-soundout', 'show-hotspotclients', 'show-wake', 'show-overheat', 'show-reboot', 'show-recording'])
+        S.set_boolean(k, true);
+    const THR = '/sys/devices/system/cpu/cpu0/thermal_throttle/core_throttle_count';
+    const REB = '/var/run/reboot-required';
+    fsx.files.delete(REB);
+    fsx.files.set(THR, '10');
+    const sink = (name, desc, port, type, avail) => ({name, description: desc, active_port: port, ports: [{name: port, type, availability: avail}]});
+    const SINKS = JSON.stringify([
+        sink('alsa_output.speakers', 'Built-in Audio', 'analog-output-speaker', 'Speaker', 'availability unknown'),
+        sink('alsa_output.hdmi', 'Built-in Audio (HDMI)', 'hdmi-output-0', 'HDMI', 'available'),
+        sink('alsa_output.wired', 'Built-in Audio', 'analog-output-headphones', 'Headphones', 'availability unknown'),
+    ]);
+    const nm = {wifi: 'enabled', ssids: 'yes:HomeNet\nno:Other', conns: '', dev: 'wlp2s0', neigh: '', sink: 'alsa_output.speakers', pactl: true};
+    const UUID = '11111111-1111-1111-1111-111111111111';
+    fsx.run = argv => {
+        const a = argv.join(' ');
+        if (argv[0] === 'pactl') {
+            if (!nm.pactl) return '';
+            if (argv[1] === 'get-default-sink') return nm.sink + '\n';
+            if (argv[1] === '--format=json') return SINKS;
+            return '';
+        }
+        if (a === 'nmcli radio wifi') return nm.wifi;
+        if (a.startsWith('nmcli -t -f ACTIVE,SSID')) return nm.ssids;
+        if (a.startsWith('nmcli -t -f UUID,TYPE,NAME')) return nm.conns;
+        if (a.startsWith('nmcli -g 802-11-wireless.mode')) return 'ap';
+        if (a.startsWith('nmcli -g GENERAL.DEVICES')) return nm.dev;
+        if (a === 'ip neigh') return nm.neigh;
+        return '';
+    };
+    ext.enable();
+    const ind4 = ext._indicator;
+    const t4 = () => [ind4._q.cur?.text, ...ind4._q.items.map(m => m.text)].filter(Boolean);
+    const settle = () => new Promise(r => setTimeout(r, 0));
+    const poll = async () => { await ind4._pollSlow(); await settle(); await settle(); };
+    await settle(); await poll(); await poll();
+    await ind4._pollSoundOut(); await settle();
+    for (let i = 0; i < 3; i++) step(1000);
+    ind4._q.clear();
+    assert.deepEqual(t4(), [], 'silent at start: ' + t4());
+
+    // ---- Wi-Fi switch: only "Switched to", never "connected to" as well; not from none
+    nm.ssids = 'yes:Office\nno:HomeNet'; await poll();
+    assert.deepEqual(t4(), ['Switched to Office'], t4().join('|'));
+    ind4._q.clear();
+    nm.ssids = 'no:Office'; await poll();                          // dropped: plain disconnect
+    assert.deepEqual(t4(), ['Wi-Fi disconnected'], t4().join('|'));
+    ind4._q.clear();
+    nm.ssids = 'yes:Cafe'; await poll();                           // from none: the old message
+    assert.deepEqual(t4(), ['Wi-Fi is connected to Cafe'], t4().join('|'));
+    ind4._q.clear();
+    nm.ssids = 'yes:A very long network name that goes on and on and on'; await poll();
+    assert.ok(t4()[0].startsWith('Switched to ') && t4()[0].length <= 'Switched to '.length + 30, t4().join('|'));
+    ind4._q.clear();
+    S.set_boolean('show-wifiswitch', false);                       // kind off: do not lose the news, say the old way
+    nm.ssids = 'yes:Home2'; await poll();
+    assert.deepEqual(t4(), ['Wi-Fi is connected to Home2'], t4().join('|'));
+    S.set_boolean('show-wifiswitch', true); ind4._q.clear();
+
+    // ---- sound output
+    nm.sink = 'alsa_output.hdmi'; await ind4._pollSoundOut(); await settle();
+    assert.deepEqual(t4(), ['Sound: HDMI'], t4().join('|'));
+    ind4._q.clear();
+    await ind4._pollSoundOut(); await settle();
+    assert.deepEqual(t4(), [], 'same output: nothing');
+    ind4._hpMsgAt = Date.now();                                    // "Headphones connected" was just said
+    nm.sink = 'alsa_output.wired'; await ind4._pollSoundOut(); await settle();
+    assert.deepEqual(t4(), [], 'within 2 s of the headphones message: skipped');
+    globalThis.__now += 5000;
+    nm.sink = 'alsa_output.speakers'; await ind4._pollSoundOut(); await settle();
+    assert.deepEqual(t4(), ['Sound: Speakers'], t4().join('|'));
+    ind4._q.clear();
+    nm.sink = 'alsa_output.wired'; await ind4._pollSoundOut(); await settle();
+    assert.deepEqual(t4(), ['Sound: Headphones'], t4().join('|'));
+    const icS = text => ind4._iconFor({text, kind: 'info', cat: 'soundout', key: 'soundout'});
+    assert.equal(icS('Sound: Headphones'), 'headphone'); assert.equal(icS('Sound: Speakers'), 'speaker');
+    ind4._q.clear();
+    S.set_boolean('show-soundout', false);
+    nm.sink = 'alsa_output.speakers'; await ind4._pollSoundOut(); await settle();
+    assert.deepEqual(t4(), [], 'switch off: quiet');
+    S.set_boolean('show-soundout', true); await settle(); await settle();   // handler reads the baseline
+    assert.deepEqual(t4(), [], 'back on: baseline is silent');
+    nm.sink = 'alsa_output.hdmi'; await ind4._pollSoundOut(); await settle();
+    assert.deepEqual(t4(), ['Sound: HDMI'], t4().join('|'));
+    ind4._q.clear();
+    nm.pactl = false; nm.sink = 'alsa_output.speakers'; await ind4._pollSoundOut(); await settle();
+    assert.deepEqual(t4(), [], 'no pactl: quiet, no crash'); nm.pactl = true;
+    await ind4._pollSoundOut(); await settle(); ind4._q.clear();
+
+    // ---- hotspot clients
+    nm.conns = `${UUID}:802-11-wireless:MyHotspot`; nm.ssids = 'no:Home2';
+    nm.neigh = '';
+    await poll();
+    assert.ok(!t4().some(t => /hotspot/.test(t) && /device/.test(t)), 'baseline when the hotspot starts is silent: ' + t4().join('|'));
+    assert.ok(t4().includes('Hotspot is ON'), t4().join('|'));
+    ind4._q.clear();
+    nm.neigh = '10.42.0.23 dev wlp2s0 lladdr aa:bb:cc:00:00:01 REACHABLE';
+    await poll();
+    assert.deepEqual(t4(), ['1 device on your hotspot'], t4().join('|'));
+    ind4._q.clear(); await poll();
+    assert.deepEqual(t4(), [], 'same count: nothing');
+    nm.neigh += '\n10.42.0.31 dev wlp2s0 lladdr aa:bb:cc:00:00:02 STALE\nfe80::1 dev wlp2s0 lladdr aa:bb:cc:00:00:02 STALE';
+    await poll();
+    assert.deepEqual(t4(), ['2 devices on your hotspot'], t4().join('|'));
+    ind4._q.clear();
+    nm.neigh = '10.42.0.31 dev wlp2s0 lladdr aa:bb:cc:00:00:02 STALE'; await poll();
+    assert.deepEqual(t4(), ['1 device on your hotspot'], t4().join('|'));
+    ind4._q.clear();
+    S.set_boolean('show-hotspotclients', false);
+    nm.neigh = ''; await poll();
+    assert.ok(!t4().some(t => /device/.test(t)), 'kind off: quiet');
+    S.set_boolean('show-hotspotclients', true); ind4._q.clear();
+    nm.conns = ''; await poll();                                   // hotspot off: no client message
+    assert.ok(!t4().some(t => /device/.test(t)), t4().join('|'));
+    ind4._q.clear();
+    nm.conns = `${UUID}:802-11-wireless:MyHotspot`; nm.neigh = '10.42.0.99 dev wlp2s0 lladdr aa:bb:cc:00:00:09 REACHABLE';
+    await poll();
+    assert.ok(!t4().some(t => /device/.test(t)), 'on again: new baseline, silent: ' + t4().join('|'));
+    nm.conns = ''; nm.neigh = ''; nm.ssids = 'yes:Home2'; await poll(); ind4._q.clear();
+
+    // ---- wake from sleep: time comes from the clock; short sleeps are ignored
+    const SLEEP = (on) => ({get_child_value: () => ({recursiveUnpack: () => on})});
+    const emitSleep = on => globalThis.__dbus.emit('system', '/org/freedesktop/login1', 'org.freedesktop.login1.Manager', 'PrepareForSleep', SLEEP(on));
+    emitSleep(true); globalThis.__now += 2 * 3600e3 + 10 * 60e3; emitSleep(false);
+    assert.deepEqual(t4(), ['Welcome back, slept 2h 10m'], t4().join('|'));
+    ind4._q.clear();
+    emitSleep(true); globalThis.__now += 30e3; emitSleep(false);
+    assert.deepEqual(t4(), [], 'under a minute: nothing');
+    emitSleep(false);
+    assert.deepEqual(t4(), [], 'wake without a sleep start: nothing');
+    S.set_boolean('show-wake', false);
+    emitSleep(true); globalThis.__now += 3600e3; emitSleep(false);
+    assert.deepEqual(t4(), [], 'kind off: quiet'); S.set_boolean('show-wake', true);
+
+    // ---- overheat: first reading silent, once per 10 minutes, no file = nothing runs
+    const ov = ind4._sources.find(x => x instanceof src.OverheatSource);
+    assert.ok(ov._timers.size > 0, 'watching while the file exists');
+    ov._check(); assert.deepEqual(t4(), [], 'same count');
+    fsx.files.set(THR, '12'); ov._check();
+    assert.deepEqual(t4(), ['CPU is slowing down: too hot'], t4().join('|'));
+    ind4._q.clear();
+    fsx.files.set(THR, '14'); ov._check();
+    assert.deepEqual(t4(), [], 'within 10 minutes: quiet');
+    globalThis.__now += 11 * 60e3; fsx.files.set(THR, '16'); ov._check();
+    assert.deepEqual(t4(), ['CPU is slowing down: too hot'], t4().join('|'));
+    ind4._q.clear();
+    S.set_boolean('show-overheat', false); globalThis.__now += 11 * 60e3; fsx.files.set(THR, '30'); ov._check();
+    assert.deepEqual(t4(), [], 'kind off: quiet');
+    S.set_boolean('show-overheat', true); fsx.files.set(THR, '40'); ov._check();
+    assert.deepEqual(t4(), [], 'back on: new baseline, silent');
+    ind4._q.clear();
+    ext.disable(); fsx.files.delete(THR); ext.enable();
+    const ind5 = ext._indicator;
+    assert.equal(ind5._sources.find(x => x instanceof src.OverheatSource)._timers.size, 0, 'no file (AMD, VM): no timer at all');
+    await settle();
+
+    // ---- reboot needed: not without the file, once per login even if the extension restarts
+    const rb = ind5._sources.find(x => x instanceof src.RebootSource);
+    const t5 = () => [ind5._q.cur?.text, ...ind5._q.items.map(m => m.text)].filter(Boolean);
+    ind5._q.clear();
+    rb._check(); assert.deepEqual(t5(), [], 'no file: nothing');
+    fsx.files.set(REB, '*** System restart required ***');
+    rb._check(); assert.deepEqual(t5(), ['Reboot needed to finish updates'], t5().join('|'));
+    ind5._q.clear(); rb._check();
+    assert.deepEqual(t5(), [], 'only once');
+    ext.disable(); ext.enable();
+    const ind6 = ext._indicator;
+    ind6._sources.find(x => x instanceof src.RebootSource)._check();
+    assert.deepEqual([ind6._q.cur?.text].filter(Boolean), [], 'extension restarted: still once');
+
+    // ---- screen recording
+    const t6 = () => [ind6._q.cur?.text, ...ind6._q.items.map(m => m.text)].filter(Boolean);
+    ind6._q.clear();
+    globalThis.__rec.set(true);
+    assert.deepEqual(t6(), ['Screen recording started'], t6().join('|'));
+    globalThis.__rec.set(true);
+    assert.equal(t6().length, 1, 'same state: no repeat');
+    globalThis.__rec.set(false);
+    assert.ok(t6().includes('Screen recording stopped'), t6().join('|'));
+    ind6._q.clear();
+    S.set_boolean('show-recording', false); globalThis.__rec.set(true);
+    assert.deepEqual(t6(), [], 'kind off: quiet'); globalThis.__rec.set(false);
+    S.set_boolean('show-recording', true);
+
+    // ---- icons
+    const ic = (cat, text = 'x', kind = 'info') => ind6._iconFor({text, kind, cat, key: cat});
+    assert.deepEqual(['hotspotclients', 'wake', 'overheat', 'reboot', 'wifiswitch', 'recording'].map(c => ic(c)),
+        ['hotspot', 'sleep', 'thermometer', 'reboot', 'network-switch', 'record']);
+    ind6._q.clear();
+    console.log('phase 4 ok');
+}
+
 // ---- clean shutdown: no timers, no settings handlers left
 ext.disable();
 const left = [...globalThis.__timers.values()];
@@ -400,5 +596,6 @@ assert.equal(S.handlerCount(), 0, 'settings handlers left: ' + S.handlerCount())
 assert.equal(globalThis.__gs.count(), 0, 'system setting handlers left: ' + globalThis.__gs.count());
 assert.equal(globalThis.__fm.active.size, 0, 'file monitors left: ' + globalThis.__fm.active.size);
 assert.equal(globalThis.__lm.count(), 0, 'monitor handlers left: ' + globalThis.__lm.count());
+assert.equal(globalThis.__rec.count(), 0, 'screenshot UI handlers left: ' + globalThis.__rec.count());
 assert.equal(globalThis.__dbus.count(), 0, 'D-Bus subscriptions left: ' + globalThis.__dbus.count());
 console.log('ALL HARNESS CHECKS PASSED');

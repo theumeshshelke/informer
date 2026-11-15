@@ -849,5 +849,96 @@
       <default>true</default>
       <summary>Show the icon for brightness messages</summary>
     </key>
+    <key name="show-recording" type="b">
+      <default>true</default>
+      <summary>Show screen recording messages</summary>
+    </key>
+    <key name="priority-recording" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of screen recording messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-recording" type="b">
+      <default>true</default>
+      <summary>Show the icon for screen recording messages</summary>
+    </key>
+    <key name="show-overheat" type="b">
+      <default>true</default>
+      <summary>Show CPU overheating messages</summary>
+    </key>
+    <key name="priority-overheat" type="i">
+      <default>2</default>
+      <range min="0" max="3"/>
+      <summary>Priority of CPU overheating messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-overheat" type="b">
+      <default>true</default>
+      <summary>Show the icon for CPU overheating messages</summary>
+    </key>
+    <key name="show-soundout" type="b">
+      <default>true</default>
+      <summary>Show sound output messages</summary>
+    </key>
+    <key name="priority-soundout" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of sound output messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-soundout" type="b">
+      <default>true</default>
+      <summary>Show the icon for sound output messages</summary>
+    </key>
+    <key name="show-wifiswitch" type="b">
+      <default>true</default>
+      <summary>Show Wi-Fi switch messages</summary>
+    </key>
+    <key name="priority-wifiswitch" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of Wi-Fi switch messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-wifiswitch" type="b">
+      <default>true</default>
+      <summary>Show the icon for Wi-Fi switch messages</summary>
+    </key>
+    <key name="show-wake" type="b">
+      <default>true</default>
+      <summary>Show wake-up messages</summary>
+    </key>
+    <key name="priority-wake" type="i">
+      <default>1</default>
+      <range min="0" max="3"/>
+      <summary>Priority of wake-up messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-wake" type="b">
+      <default>true</default>
+      <summary>Show the icon for wake-up messages</summary>
+    </key>
+    <key name="show-hotspotclients" type="b">
+      <default>true</default>
+      <summary>Show hotspot device messages</summary>
+    </key>
+    <key name="priority-hotspotclients" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of hotspot device messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-hotspotclients" type="b">
+      <default>true</default>
+      <summary>Show the icon for hotspot device messages</summary>
+    </key>
+    <key name="show-reboot" type="b">
+      <default>true</default>
+      <summary>Show reboot messages</summary>
+    </key>
+    <key name="priority-reboot" type="i">
+      <default>0</default>
+      <range min="0" max="3"/>
+      <summary>Priority of reboot messages: 0 low, 1 normal, 2 high, 3 critical</summary>
+    </key>
+    <key name="icon-reboot" type="b">
+      <default>true</default>
+      <summary>Show the icon for reboot messages</summary>
+    </key>
   </schema>
 </schemalist>

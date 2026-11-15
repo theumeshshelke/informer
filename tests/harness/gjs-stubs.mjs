@@ -18,6 +18,12 @@ export const Main = {
         connect(sig, cb) { const id = lmId++; lmHandlers.set(id, {sig, cb}); return id; },
         disconnect(id) { lmHandlers.delete(id); }},
 };
+const ssHandlers = new Map(); let ssId = 1;
+Main.screenshotUI = {screencast_in_progress: false,
+    connect(sig, cb) { const id = ssId++; ssHandlers.set(id, {sig, cb}); return id; },
+    disconnect(id) { ssHandlers.delete(id); }};
+globalThis.__rec = {count: () => ssHandlers.size,
+    set(on) { Main.screenshotUI.screencast_in_progress = on; for (const h of [...ssHandlers.values()]) if (h.sig === 'notify::screencast-in-progress') h.cb(); }};
 globalThis.__lm = {handlers: lmHandlers, count: () => lmHandlers.size,
     set(n) { Main.layoutManager.monitors = Array.from({length: n}, () => ({})); for (const h of [...lmHandlers.values()]) if (h.sig === 'monitors-changed') h.cb(); }};
 class Base { constructor(...a) { this._init(...a); } _init() { this.menu = new FakeMenu(); } }

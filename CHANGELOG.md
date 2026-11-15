@@ -1,5 +1,22 @@
 # Changelog
 
+## 8 - 16 new confirmation messages
+Bar only, nothing added to the dropdown. Every kind has its own `show-`, `priority-` and `icon-` setting (Settings > Messages). All are silent at start and only speak about changes. If a file, command or service is missing, that message quietly does nothing. **No new network hosts.** No animation anywhere: 16 new still icons.
+- Night Light (`nightlight`, Low), Location (`location`, Low), Touchpad (`touchpad`, Normal): GSettings watchers (`SwitchSource`, `switchlogic.js`).
+- Power mode (`powermode`, Normal): D-Bus `PropertiesChanged` of power-profiles-daemon (both bus names).
+- Monitor (`monitor`, Normal): `monitors-changed`, 600 ms debounce. Ethernet (`ethernet`, Normal): `/sys/class/net/en*|eth*/carrier` inside the slow poll. Controller (`gamepad`, Normal): folder watch on `/dev/input` for `js*`, only while on. Printer (`printer`, Normal): USB class 07 in `UsbDevSource`. Brightness (`brightness`, Low): sysfs backlight, read in the 1 s heartbeat. Pure logic in `hwlogic.js`.
+- Sound output (`soundout`, Normal): default output changed, from the `pactl subscribe` stream, then `pactl get-default-sink`. Skipped for 2 s after "Headphones connected / unplugged". The Bluetooth device name is used for Bluetooth outputs.
+- Hotspot devices (`hotspotclients`, Low): while the hotspot is on, counts devices from `ip neigh` on the hotspot interface (falls back to the 10.42.x.x network), message only when the count changes. The first count after the hotspot starts is silent.
+- Welcome back (`wake`, Normal): logind `PrepareForSleep`; the time slept comes from our own clock; sleeps under 1 minute are ignored.
+- CPU too hot (`overheat`, High): `core_throttle_count` going up (Intel), checked every 30 s, at most once per 10 minutes. No file, no timer.
+- Reboot needed (`reboot`, Low): `/var/run/reboot-required`, first look 15 s after start, then every 30 minutes, once per login.
+- Wi-Fi switch (`wifiswitch`, Normal): "Switched to NAME" replaces "Wi-Fi is connected to ..." when you move from one Wi-Fi to another (not from none). If this kind is off, the old message is shown instead.
+- Screen recording (`recording`, High): "Screen recording started / stopped", from `Main.screenshotUI` `screencast-in-progress` (the same property the Shell's red recording dot uses). Covers the built-in recorder only, not OBS and other apps. If the Shell has no such property it stays quiet.
+- New modules: `switchlogic.js`, `hwlogic.js`, `eventlogic.js` (all without GNOME imports). New helper `fileExists()` in `util.js`.
+- Icons added (white, one shape, 64x64): `monitor ethernet gamepad printer moon power record location touchpad brightness speaker hotspot sleep thermometer reboot network-switch`.
+- Tests: `tests/logic-version8.test.mjs` and a scenario block per feature in the fake-shell harness (`tests/harness`), which also checks that `disable()` leaves no timers, handlers, monitors, D-Bus subscriptions or screenshot-UI handlers.
+- Not tested on a real GNOME Shell: only Node tests and the fake shell. The Shell JS files were not available, so the Shell calls are unchecked.
+
 ## 7
 - Pen drive: after you unmount or eject a USB drive the bar says "Safe to remove: NAME" (category `usb`). The "USB removed" message is skipped right after it.
 - Other USB devices (OTG): phone, mouse, keyboard, adapter plugged / removed, read from `/sys/bus/usb/devices` every 3 seconds, only while `show-usbdev` is on. Hubs, built-in parts and pen drives are skipped. Module `usblogic.js`, category `usbdev` (Normal).

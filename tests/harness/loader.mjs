@@ -17,7 +17,7 @@ export async function load(url, ctx, next) {
   if (spec === 'gi://GLib') src = `import {GLib} from '${H}gjs-stubs.mjs'; export default GLib;`;
   else if (spec === 'gi://Gio') src = `import {Gio} from '${H}gjs-stubs.mjs'; export default Gio;`;
   else if (spec === 'gi://GObject') src = `import {GObject} from '${H}gjs-stubs.mjs'; export default GObject;`;
-  else if (spec.endsWith('/ui/main.js')) src = `import {Main} from '${H}gjs-stubs.mjs'; export const {panel, wm, messageTray, inputMethod, sessionMode, overview, notify, layoutManager} = Main;`;
+  else if (spec.endsWith('/ui/main.js')) src = `import {Main} from '${H}gjs-stubs.mjs'; export const {panel, wm, messageTray, inputMethod, sessionMode, overview, notify, layoutManager, screenshotUI} = Main;`;
   else if (spec.endsWith('/ui/panelMenu.js')) src = `import {PanelMenu} from '${H}gjs-stubs.mjs'; export const Button = PanelMenu.Button;`;
   else if (spec.endsWith('/ui/popupMenu.js')) src = `import {PopupMenu} from '${H}gjs-stubs.mjs'; export const {PopupBaseMenuItem, PopupMenuItem, PopupSeparatorMenuItem} = PopupMenu;`;
   else if (spec.endsWith('/extensions/extension.js')) src = `import {Extension as E} from '${H}gjs-stubs.mjs'; export const Extension = E;`;

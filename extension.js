@@ -35,11 +35,13 @@ import {SimpleTimer, fmtTimer, timerDoneText, timerLabel} from './timerlogic.js'
 import {parseHeadphones} from './headphones.js';
 import {aqiName} from './airlogic.js';
 import {brightnessPct, ethernetUp, pickBacklight} from './hwlogic.js';
+import {countClients, hotspotMessage, soundOutInfo} from './eventlogic.js';
 import {clip, fmtBytes, listDir, readFile, run} from './util.js';
 import {
     CalendarSource, CameraSource, InternetSource, KeyboardSource,
     ClipboardSource, FilesSource, GamepadSource, LayoutSource, MediaSource, MonitorSource, NotifySource, PingSource, PublicIpSource,
-    PowerModeSource, ReminderSource, SwitchSource, SystemSource, UsbDevSource, UsbSource, WeatherSource,
+    OverheatSource, PowerModeSource, RebootSource, RecordingSource, ReminderSource, SwitchSource, SystemSource,
+    UsbDevSource, UsbSource, WakeSource, WeatherSource,
 } from './sources.js';
 
 // ---------------- look & feel (code-level settings) ----------------
@@ -327,6 +329,11 @@ class InformerIndicator extends PanelMenu.Button {
         this._deb = {};
         this._subs = [];
         this._apCache = new Map();        // connection uuid -> is it a hotspot?
+        this._hsIf = new Map();           // hotspot connection uuid -> its network interface
+        this._hsN = null;                 // devices on the hotspot (null = hotspot off / not counted)
+        this._so = null;                  // default sound output (sink name), null = not read yet
+        this._soBusy = false;
+        this._hpMsgAt = 0;                // when we last said "Headphones connected / unplugged"
         this._radioQuietUntil = 0;        // hide Wi-Fi/Bluetooth noise right after airplane mode
         this._unplugAt = 0;
         this._lowLevel = 0;
@@ -351,6 +358,8 @@ class InformerIndicator extends PanelMenu.Button {
         this._pollMic();
         this._pollHeadphones();
         this._hpSig = this._s.connect('changed::show-headphones', () => this._pollHeadphones());
+        this._pollSoundOut();
+        this._soSig = this._s.connect('changed::show-soundout', () => this._pollSoundOut());
         this._subscribeDBus();
         this._startPactl();
 
@@ -364,7 +373,8 @@ class InformerIndicator extends PanelMenu.Button {
         for (const S of [MediaSource, UsbSource, KeyboardSource, CameraSource,
             InternetSource, SystemSource, CalendarSource, WeatherSource, PingSource, PublicIpSource,
             ClipboardSource, FilesSource, ReminderSource, NotifySource, LayoutSource, UsbDevSource,
-            SwitchSource, PowerModeSource, MonitorSource, GamepadSource]) {
+            SwitchSource, PowerModeSource, MonitorSource, GamepadSource,
+            WakeSource, OverheatSource, RebootSource, RecordingSource]) {
             try {
                 const src = new S(ctx);
                 this._sources.push(src);
@@ -1282,6 +1292,8 @@ class InformerIndicator extends PanelMenu.Button {
                     this._debounce('vol', 60, () => this._pollVol());
                 if (/'change' on (source|server)/.test(line))
                     this._debounce('mic', 80, () => this._pollMic());
+                if (/'change' on server/.test(line))
+                    this._debounce('so', 500, () => this._pollSoundOut());
                 if (/'(change|new|remove)' on (sink|card)/.test(line))
                     this._debounce('hp', 400, () => this._pollHeadphones());
                 this._readPactl();
@@ -1309,10 +1321,39 @@ class InformerIndicator extends PanelMenu.Button {
             this._hp = st.connected;
             if (prev === null || prev === st.connected)
                 return;
+            this._hpMsgAt = Date.now();
             this._flash(st.connected ? 'Headphones connected' : 'Headphones unplugged',
                 st.connected ? 'good' : 'bad', 'headphones', {key: 'headphones'});
         } finally {
             this._hpBusy = false;
+        }
+    }
+
+    // ------------------------------------------------ sound output (Speakers / HDMI / Headphones ...)
+    // Says it when the default output changes. The first reading is silent, and so is anything within
+    // 2 s of the "Headphones connected / unplugged" message (that one already tells the story).
+    async _pollSoundOut() {
+        if (this._soBusy || this._destroyed)
+            return;
+        this._soBusy = true;
+        try {
+            if (!this._bool('show-soundout')) {
+                this._so = null;                 // switched off: the next time starts fresh (no message)
+                return;
+            }
+            const name = (await run(['pactl', 'get-default-sink'])).trim();   // no pactl: empty, quiet
+            if (this._destroyed || !name)
+                return;
+            const prev = this._so;
+            this._so = name;
+            if (prev === null || prev === name || Date.now() - this._hpMsgAt < 2000)
+                return;
+            const info = soundOutInfo(await run(['pactl', '--format=json', 'list', 'sinks']), name);
+            if (this._destroyed || !info)
+                return;
+            this._flash(clip(info.text, 40), 'info', 'soundout', {key: 'soundout'});
+        } finally {
+            this._soBusy = false;
         }
     }
 
@@ -1331,6 +1372,20 @@ class InformerIndicator extends PanelMenu.Button {
         return this._apCache.get(uuid);
     }
 
+    // network interface of the hotspot (cached once we know it; empty = unknown, the parser then uses 10.42.x.x)
+    async _hotspotIface(uuid) {
+        if (!uuid)
+            return '';
+        if (!this._hsIf.get(uuid)) {
+            const out = (await run(['nmcli', '-g', 'GENERAL.DEVICES', 'connection', 'show', 'uuid', uuid])).trim();
+            const dev = out.split('\n')[0].trim();
+            if (dev)
+                this._hsIf.set(uuid, dev);
+            return dev;
+        }
+        return this._hsIf.get(uuid);
+    }
+
     async _doSlow() {
         const [wifiRadio, wifiList, btShow, btDevs, conns] = await Promise.all([
             run(['nmcli', 'radio', 'wifi']),
@@ -1345,6 +1400,7 @@ class InformerIndicator extends PanelMenu.Button {
         // active connections: VPNs and hotspot
         const vpns = [];
         let hotspot = false;
+        let hotspotUuid = '';
         for (const line of conns.split('\n')) {
             const m = line.match(/^([0-9a-f-]{36}):([^:]*):(.*)$/i);
             if (!m)
@@ -1352,8 +1408,10 @@ class InformerIndicator extends PanelMenu.Button {
             const [, uuid, type, rawName] = m;
             if (type === 'vpn' || type === 'wireguard')
                 vpns.push(rawName.replace(/\\:/g, ':'));
-            else if (type === '802-11-wireless' && await this._isHotspot(uuid))
+            else if (type === '802-11-wireless' && await this._isHotspot(uuid)) {
                 hotspot = true;
+                hotspotUuid = uuid;
+            }
         }
         if (this._destroyed)
             return;
@@ -1393,6 +1451,21 @@ class InformerIndicator extends PanelMenu.Button {
         const air = readAirplane();
         const eth = ethernetUp(listDir('/sys/class/net').map(n => ({name: n, carrier: readFile(`/sys/class/net/${n}/carrier`)})));
 
+        // devices on the hotspot: counted only while it is on, a message only when the number changes
+        let hsN = null;
+        if (hotspot && this._bool('show-hotspotclients')) {
+            hsN = countClients(await run(['ip', 'neigh']), await this._hotspotIface(hotspotUuid));
+            if (this._destroyed)
+                return;
+        }
+        const hsPrev = this._hsN;
+        this._hsN = hsN;
+        if (hsN !== null && hsPrev !== null && hsN !== hsPrev) {
+            const hm = hotspotMessage(hsN);
+            if (hm)
+                this._flash(hm.text, hm.kind, 'hotspotclients', {key: 'hotspotclients'});
+        }
+
         const prev = this._prevSlow;
         this._prevSlow = {wifi, bt, vpns, hotspot, air, eth};
         if (!prev)
@@ -1430,7 +1503,9 @@ class InformerIndicator extends PanelMenu.Button {
             // hotspot turned off: the hotspot message already says it
             const afterHotspot = prev.wifi.s === 'hotspot' && wifi.s === 'disconnected';
             if (wifiMoved && !afterHotspot) {
-                if (wifi.s === 'connected')
+                if (wifi.s === 'connected' && prev.wifi.s === 'connected' && this._bool('show-wifiswitch'))
+                    this._flash(`Switched to ${clip(wifi.ssid, 30)}`, 'info', 'wifiswitch', {key: 'wifi'});   // only this one, not "connected to"
+                else if (wifi.s === 'connected')
                     this._flash(`Wi-Fi is connected to ${wifi.ssid}`, 'good', 'wifi', {key: 'wifi'});
                 else if (wifi.s === 'disconnected')
                     this._flash('Wi-Fi disconnected', 'bad', 'wifi', {key: 'wifi'});
@@ -1635,6 +1710,10 @@ class InformerIndicator extends PanelMenu.Button {
         if (this._hpSig) {
             this._s.disconnect(this._hpSig);
             this._hpSig = 0;
+        }
+        if (this._soSig) {
+            this._s.disconnect(this._soSig);
+            this._soSig = 0;
         }
         if (this._keyBound) {
             try {

@@ -32,5 +32,6 @@ export function fmtDuration(ms) {
 }
 
 export function readFile(path) { return globalThis.__fs.files.get(path) ?? ''; }
+export function fileExists(path) { return globalThis.__fs.files.has(path); }
 export function listDir(path) { return globalThis.__fs.dirs.get(path) ?? []; }
 export function run(argv) { return Promise.resolve(globalThis.__fs.run ? globalThis.__fs.run(argv) : ''); }
